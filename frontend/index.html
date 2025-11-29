@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Realtime Speech + LLM Demo</title>
+    <style>
+        body { font-family: Arial; margin: 20px; background: #111; color: #eee; }
+        .box { border: 1px solid #444; padding: 10px; margin-top: 12px; }
+        button { padding: 10px 20px; margin-right: 10px; }
+    </style>
+</head>
+
+<body>
+    <h2>🎤 Realtime Speech + LLM Demo</h2>
+
+    <button id="start">Start Mic</button>
+    <button id="stop">Stop</button>
+
+    <div class="box">
+        <h3>Partial Transcript</h3>
+        <div id="partial"></div>
+    </div>
+
+    <div class="box">
+        <h3>Final Transcript</h3>
+        <div id="final"></div>
+    </div>
+
+    <div class="box">
+        <h3>LLM Response</h3>
+        <div id="llm"></div>
+    </div>
+
+<script>
+let ws;
+let audioContext;
+let micStream;
+let processor;
+
+document.getElementById("start").onclick = async () => {
+    console.log("🔊 Starting microphone stream...");
+
+    ws = new WebSocket("ws://localhost:8000/ws/stream");
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => console.log("WS connected");
+    ws.onclose = () => console.log("WS closed");
+
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        
+        if (msg.type === "partial") {
+            document.getElementById("partial").innerText = msg.text;
+        } 
+        else if (msg.type === "final") {
+            document.getElementById("final").innerText = msg.text;
+        }
+        else if (msg.type === "llm") {
+            document.getElementById("llm").innerText = msg.content;
+        }
+    };
+
+    // Ask mic permission
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Azure STT requires PCM16 at 16000 Hz
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    const source = audioContext.createMediaStreamSource(micStream);
+
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (e) => {
+        const floatData = e.inputBuffer.getChannelData(0);
+        const pcm16 = floatToPCM16(floatData);
+        ws.send(pcm16);
+    };
+
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+};
+
+document.getElementById("stop").onclick = () => {
+    console.log("🛑 Stopping microphone...");
+    if (processor) processor.disconnect();
+    if (audioContext) audioContext.close();
+    if (ws) ws.close();
+};
+
+function floatToPCM16(float32Array) {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+
+    for (let i = 0; i < float32Array.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(offset, s * 0x7fff, true);
+    }
+
+    return buffer;
+}
+</script>
+</body>
+</html>
