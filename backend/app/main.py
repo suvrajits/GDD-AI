@@ -11,6 +11,8 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 import azure.cognitiveservices.speech as speechsdk
 from .config import CONFIG
+from .llm_orchestrator import call_llm
+
 
 app = FastAPI()
 
@@ -54,10 +56,20 @@ async def azure_stream(ws: WebSocket):
 
     def recognized(evt):
         if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
-            asyncio.run_coroutine_threadsafe(
-                ws.send_json({"type": "final", "text": evt.result.text}),
-                loop
-            )
+            text = evt.result.text
+
+            async def handle_final():
+                # send final STT transcript
+                await ws.send_json({"type": "final", "text": text})
+
+                # LLM reply
+                llm_reply = await call_llm(text)
+
+                # send to frontend
+                await ws.send_json({"type": "llm", "text": llm_reply})
+
+            asyncio.run_coroutine_threadsafe(handle_final(), loop)
+
 
     recognizer.recognizing.connect(recognizing)
     recognizer.recognized.connect(recognized)
@@ -87,3 +99,4 @@ async def azure_stream(ws: WebSocket):
 async def websocket_stream(ws: WebSocket):
     await ws.accept()
     await azure_stream(ws)
+

@@ -9,11 +9,11 @@ CONFIG = {}
 
 USE_KEYVAULT = os.getenv("USE_KEYVAULT", "false").lower() == "true"
 
-print("USE_KEYVAULT =", USE_KEYVAULT)
+#print("USE_KEYVAULT =", USE_KEYVAULT)
 
 if USE_KEYVAULT:
     kv_name = os.getenv("KEYVAULT_NAME")
-    print("ENV KEYVAULT_NAME =", kv_name)
+    #print("ENV KEYVAULT_NAME =", kv_name)
 
     if not kv_name:
         raise RuntimeError("❌ KEYVAULT_NAME is missing in .env")
@@ -34,7 +34,7 @@ if USE_KEYVAULT:
     try:
         print("📥 Fetching list of secrets...")
         props = list(client.list_properties_of_secrets())
-        print("FOUND SECRETS:", [p.name for p in props])
+        print("FOUND SECRETS:")
 
         for p in props:
             val = client.get_secret(p.name).value
@@ -43,14 +43,20 @@ if USE_KEYVAULT:
     except Exception as e:
         print("❌ ERROR while listing secrets:", e)
 
-    print("📦 SECRETS LOADED:", secrets)
+    print("📦 SECRETS LOADED:")
 
     # Map exactly by the names in your KeyVault
     CONFIG["AZURE_SPEECH_KEY"]    = secrets.get("azure-speech-key")
     CONFIG["AZURE_SPEECH_REGION"] = secrets.get("azure-speech-region")
 
+    # 🔥 NEW — Load Azure OpenAI secrets
+    CONFIG["AZURE_OPENAI_API_KEY"]   = secrets.get("azure-openai-api-key")
+    CONFIG["AZURE_OPENAI_ENDPOINT"]  = secrets.get("azure-openai-endpoint")
+    CONFIG["AZURE_OPENAI_DEPLOYMENT"] = secrets.get("azure-openai-deployment")
+
+
 else:
     CONFIG["AZURE_SPEECH_KEY"] = os.getenv("AZURE_SPEECH_KEY")
     CONFIG["AZURE_SPEECH_REGION"] = os.getenv("AZURE_SPEECH_REGION")
 
-print("CONFIG LOADED:", CONFIG)
+print("CONFIG LOADED:")
