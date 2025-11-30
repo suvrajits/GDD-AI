@@ -1,99 +1,138 @@
+# backend/app/speech_engine.py
+import threading
 import asyncio
+import time
+from typing import Callable, Optional
 import azure.cognitiveservices.speech as speechsdk
-from typing import Callable
-
 
 class AzureSpeechStream:
-    """
-    Streams raw 16kHz 16-bit mono PCM into Azure STT.
-    Emits partial + final via async callbacks.
-    """
+    def __init__(self, key: str, region: str):
+        # use environment or stub if keys missing
+        if not key:
+            print("Warning: AZURE_SPEECH_KEY not set — recognizer will be a no-op.")
+        self.key = key
+        self.region = region
 
-    def __init__(self, speech_key: str, region: str):
-        # -------- SPEECH CONFIG --------
-        self.speech_config = speechsdk.SpeechConfig(
-            subscription=speech_key,
-            region=region
-        )
+        # push stream for PCM int16
+        self.push_stream = None
+        self.recognizer = None
+        self._thread = None
+        self._running = False
 
-        # Get detailed hypotheses
-        self.speech_config.output_format = speechsdk.OutputFormat.Detailed
+        # callbacks (async coroutines)
+        self._on_partial = None
+        self._on_final = None
 
-        # -------- CORRECT PCM FORMAT --------
-        pcm_format = speechsdk.audio.AudioStreamFormat(
-            samples_per_second=16000,
-            bits_per_sample=16,
-            channels=1
-        )
+        # store main asyncio loop to call back coroutines
+        try:
+            self._loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._loop = None
 
-        # MUST attach format here
-        self.audio_stream: speechsdk.audio.PushAudioInputStream = (
-            speechsdk.audio.PushAudioInputStream(stream_format=pcm_format)
-        )
+    def set_callbacks(self, on_partial: Callable, on_final: Callable):
+        """Both callbacks must be async functions (coroutines)."""
+        self._on_partial = on_partial
+        self._on_final = on_final
 
-        audio_config = speechsdk.audio.AudioConfig(stream=self.audio_stream)
+    def _ensure_config(self):
+        if not self.key:
+            return None
+        speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
+        # force short phrases etc if desired
+        speech_config.set_property(speechsdk.PropertyId.SpeechServiceConnection_RealtimeTranscription, "true")
+        return speech_config
 
-        # -------- RECOGNIZER --------
-        self.recognizer = speechsdk.SpeechRecognizer(
-            speech_config=self.speech_config,
-            audio_config=audio_config
-        )
-
-        # Callback placeholders
-        self.partial_callback: Callable = None
-        self.final_callback: Callable = None
-
-    # -----------------------------------------------------------
-    def set_callbacks(self, partial_cb, final_cb):
-        self.partial_callback = partial_cb
-        self.final_callback = final_cb
-
-    # -----------------------------------------------------------
     def start(self):
-        """
-        Azure SDK event model → non-async.
-        """
-        loop = asyncio.get_event_loop()
+        """Start recognizer (runs in background thread)."""
+        if self._running:
+            return
 
-        # PARTIAL
-        def on_partial(evt):
-            if evt.result.text and self.partial_callback:
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(
-                        self.partial_callback(evt.result.text)
-                    )
-                )
+        # create push stream
+        self.push_stream = speechsdk.AudioInputStream.create_push_stream()
+        speech_config = self._ensure_config()
 
-        # FINAL
-        def on_final(evt):
-            if evt.result.text and self.final_callback:
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(
-                        self.final_callback(evt.result.text)
-                    )
-                )
+        # If key missing, we'll run a dummy thread that does nothing but echo later (no Azure)
+        if not speech_config:
+            # start dummy thread so push_audio doesn't error
+            self._running = True
+            self._thread = threading.Thread(target=self._dummy_thread, daemon=True)
+            self._thread.start()
+            return
 
-        # Wire events
-        self.recognizer.recognizing.connect(on_partial)
-        self.recognizer.recognized.connect(on_final)
+        audio_input = speechsdk.AudioConfig(stream=self.push_stream)
+        self.recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_input)
 
-        # Start continuous — DO NOT await, runs in SDK thread
-        self.recognizer.start_continuous_recognition_async()
+        # register events
+        self.recognizer.recognizing.connect(self._on_recognizing)
+        self.recognizer.recognized.connect(self._on_recognized)
+        self.recognizer.session_started.connect(lambda evt: print("Recognizer session started"))
+        self.recognizer.session_stopped.connect(lambda evt: print("Recognizer session stopped"))
+        self.recognizer.canceled.connect(lambda evt: print("Recognizer canceled:", evt.reason))
 
-    # -----------------------------------------------------------
+        # run recognition in background thread
+        self._running = True
+        self._thread = threading.Thread(target=self._recognize_thread, daemon=True)
+        self._thread.start()
+
+    def _recognize_thread(self):
+        try:
+            if not self.recognizer:
+                return
+            self.recognizer.start_continuous_recognition()
+            # keep thread alive until stopped
+            while self._running:
+                time.sleep(0.1)
+            try:
+                self.recognizer.stop_continuous_recognition()
+            except Exception:
+                pass
+        except Exception as e:
+            print("Recognizer thread error:", e)
+
+    def _dummy_thread(self):
+        # When Azure keys are missing: do nothing but keep alive
+        while self._running:
+            time.sleep(0.2)
+
     def stop(self):
+        self._running = False
         try:
-            self.recognizer.stop_continuous_recognition_async()
-            self.audio_stream.close()
-        except Exception as e:
-            print("Error stopping AzureSpeechStream:", e)
+            if self.push_stream:
+                # send close to Azure
+                self.push_stream.close()
+        except Exception:
+            pass
 
-    # -----------------------------------------------------------
-    async def push_audio(self, audio_bytes: bytes):
-        """
-        Browser sends Int16 PCM → we write raw PCM bytes directly.
-        """
+    async def push_audio(self, data: bytes):
+        """Called from async context in main.py. Accepts raw Int16 PCM bytes."""
+        # If no azure config, do nothing
+        if not self.key:
+            return
+        if not self.push_stream:
+            # safety: create push stream if missing
+            self.push_stream = speechsdk.AudioInputStream.create_push_stream()
+        # write bytes into push stream
+        # push_stream expects bytes for PCM
         try:
-            self.audio_stream.write(audio_bytes)
+            self.push_stream.write(data)
         except Exception as e:
-            print("Write error:", e)
+            print("push_audio write error:", e)
+
+    # Event handlers called by Azure SDK thread — they must schedule coroutine callbacks
+    def _on_recognizing(self, evt):
+        text = evt.result.text
+        if self._on_partial and self._loop:
+            try:
+                asyncio.run_coroutine_threadsafe(self._on_partial(text), self._loop)
+            except Exception as e:
+                print("Error scheduling on_partial:", e)
+
+    def _on_recognized(self, evt):
+        # final result
+        if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            text = evt.result.text
+            if self._on_final and self._loop:
+                try:
+                    asyncio.run_coroutine_threadsafe(self._on_final(text), self._loop)
+                except Exception as e:
+                    print("Error scheduling on_final:", e)

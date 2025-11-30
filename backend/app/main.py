@@ -1,21 +1,19 @@
 # backend/app/main.py
-import json
+from dotenv import load_dotenv
+load_dotenv()
+
+import os
 import uuid
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import threading
 
-from .config import CONFIG
-from .speech_engine import AzureSpeechStream
-from .stablebuffer import StableBuffer
-from .llm_orchestrator import call_llm
-
+from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
-import os
+import azure.cognitiveservices.speech as speechsdk
+from .config import CONFIG
 
+app = FastAPI()
 
-app = FastAPI(title="Realtime Agentic POC")
-
-# Serve static frontend files
 static_path = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
@@ -23,102 +21,69 @@ app.mount("/static", StaticFiles(directory=static_path), name="static")
 AZURE_SPEECH_KEY = CONFIG["AZURE_SPEECH_KEY"]
 AZURE_SPEECH_REGION = CONFIG["AZURE_SPEECH_REGION"]
 
-
-@app.get("/")
-def root():
-    return {"message": "Backend running"}
+print("🔐 Azure Speech Key Loaded:", AZURE_SPEECH_KEY[:5] + "****")
+print("🌍 Region:", AZURE_SPEECH_REGION)
 
 
-@app.websocket("/ws/stream")
-async def websocket_stream(ws: WebSocket):
-    await ws.accept()
-    conversation_id = str(uuid.uuid4())
-    print(f"🔌 WebSocket connected: {conversation_id}")
+async def azure_stream(ws: WebSocket):
+    session = str(uuid.uuid4())
+    print(f"WS connected: {session}")
 
-    # Stable buffer
-    buffer = StableBuffer()
+    push_stream = speechsdk.audio.PushAudioInputStream(
+        stream_format=speechsdk.audio.AudioStreamFormat(samples_per_second=16000,
+                                                        bits_per_sample=16,
+                                                        channels=1)
+    )
 
-    # Azure Speech engine (with correct args)
-    stt = AzureSpeechStream(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)
+    recognizer = speechsdk.SpeechRecognizer(
+        speech_config=speechsdk.SpeechConfig(
+            subscription=AZURE_SPEECH_KEY,
+            region=AZURE_SPEECH_REGION,
+            speech_recognition_language="en-US"
+        ),
+        audio_config=speechsdk.audio.AudioConfig(stream=push_stream),
+    )
 
-    # -----------------------------
-    # Callback: Partial
-    # -----------------------------
-    async def on_partial(text: str):
-        try:
-            merged = buffer.update_partial(text)
-            await ws.send_json({"type": "partial", "text": merged})
-        except Exception as e:
-            print("⚠️ on_partial error:", e)
+    loop = asyncio.get_event_loop()
 
-    # -----------------------------
-    # Callback: Final
-    # -----------------------------
-    async def on_final(text: str):
-        try:
-            committed = buffer.commit_final(text)
-            await ws.send_json({"type": "final", "text": committed})
+    def recognizing(evt):
+        asyncio.run_coroutine_threadsafe(
+            ws.send_json({"type": "partial", "text": evt.result.text}),
+            loop
+        )
 
-            # LLM
-            llm_reply = await call_llm(committed)
-            await ws.send_json({
-                "type": "llm",
-                "conversation_id": conversation_id,
-                "content": llm_reply
-            })
+    def recognized(evt):
+        if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            asyncio.run_coroutine_threadsafe(
+                ws.send_json({"type": "final", "text": evt.result.text}),
+                loop
+            )
 
-        except Exception as e:
-            print("⚠️ on_final error:", e)
+    recognizer.recognizing.connect(recognizing)
+    recognizer.recognized.connect(recognized)
 
-    # Wire callbacks
-    stt.set_callbacks(on_partial, on_final)
-
-    # Start STT (non-await)
-    stt.start()
-    print("🎤 Azure Speech recognition started")
+    threading.Thread(
+        target=lambda: recognizer.start_continuous_recognition(),
+        daemon=True
+    ).start()
 
     try:
         while True:
             msg = await ws.receive()
 
-            # Client disconnected
             if msg["type"] == "websocket.disconnect":
-                print("🔌 Client disconnected")
                 break
 
-            # Binary audio frame
-            if msg["type"] == "websocket.receive" and "bytes" in msg:
-                try:
-                    await stt.push_audio(msg["bytes"])
-                except Exception as e:
-                    print("⚠️ Error pushing audio:", e)
-
-            # Optional text commands
-            elif msg["type"] == "websocket.receive" and "text" in msg:
-                try:
-                    cmd = json.loads(msg["text"]).get("cmd")
-                except:
-                    cmd = None
-
-                if cmd == "stop":
-                    break
-
-                await ws.send_json({"type": "info", "msg": "unknown command"})
-
-    except WebSocketDisconnect:
-        print("⚠️ WebSocket disconnect")
-    except Exception as e:
-        print("❌ Unexpected websocket error:", e)
+            if msg.get("bytes"):
+                push_stream.write(msg["bytes"])
 
     finally:
-        try:
-            stt.stop()      # IMPORTANT: no await
-        except Exception as e:
-            print("⚠️ Error stopping STT:", e)
+        push_stream.close()
+        recognizer.stop_continuous_recognition()
+        print("WS closed:", session)
 
-        try:
-            await ws.close()
-        except:
-            pass
 
-        print(f"🛑 Clean shutdown of session {conversation_id}")
+@app.websocket("/ws/stream")
+async def websocket_stream(ws: WebSocket):
+    await ws.accept()
+    await azure_stream(ws)

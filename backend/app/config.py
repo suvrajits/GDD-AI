@@ -1,99 +1,56 @@
 import os
-from pathlib import Path
-from dotenv import load_dotenv
-
-# ----------------------------------------------------------
-# 1) LOAD .env FILE EXPLICITLY (Windows-safe)
-# ----------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
-ENV_PATH = BASE_DIR / ".env"
-
-if ENV_PATH.exists():
-    load_dotenv(ENV_PATH)
-    print(f"🔄 Loaded .env from: {ENV_PATH}")
-else:
-    print(f"⚠️ WARNING: .env not found at: {ENV_PATH}")
-
-
-# ----------------------------------------------------------
-# 2) IMPORT AZURE LIBS
-# ----------------------------------------------------------
-from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
+load_dotenv()
 
 
-# ----------------------------------------------------------
-# 3) TOGGLE: USE KEYVAULT OR .ENV
-# ----------------------------------------------------------
-USE_KEYVAULT = os.getenv("USE_KEYVAULT", "true").lower() == "true"
-KEYVAULT_NAME = os.getenv("KEYVAULT_NAME")
+CONFIG = {}
 
+USE_KEYVAULT = os.getenv("USE_KEYVAULT", "false").lower() == "true"
 
-def load_from_keyvault():
-    """
-    Fetch secrets from Azure Key Vault using DefaultAzureCredential.
-    Works ONLY if AZURE_CLIENT_ID / SECRET / TENANT_ID are provided in .env.
-    """
+print("USE_KEYVAULT =", USE_KEYVAULT)
 
-    if not KEYVAULT_NAME:
-        raise RuntimeError("❌ KEYVAULT_NAME not set in environment variables.")
+if USE_KEYVAULT:
+    kv_name = os.getenv("KEYVAULT_NAME")
+    print("ENV KEYVAULT_NAME =", kv_name)
 
-    kv_url = f"https://{KEYVAULT_NAME}.vault.azure.net/"
-    print(f"🔐 Connecting to Key Vault: {kv_url}")
+    if not kv_name:
+        raise RuntimeError("❌ KEYVAULT_NAME is missing in .env")
 
-    # Force DefaultAzureCredential to use ClientSecretCredential (local dev)
-    credential = DefaultAzureCredential(
-        exclude_managed_identity_credential=True,
-        exclude_powershell_credential=True
-    )
-
-    client = SecretClient(vault_url=kv_url, credential=credential)
-
-    print("🔐 Fetching secrets from Azure Key Vault...")
+    url = f"https://{kv_name}.vault.azure.net/"
+    print("🔐 Connecting to KeyVault:", url)
 
     try:
-        return {
-            "AZURE_SPEECH_KEY": client.get_secret("azure-speech-key").value,
-            "AZURE_SPEECH_REGION": client.get_secret("azure-speech-region").value,
-            "AZURE_OPENAI_API_KEY": client.get_secret("azure-openai-api-key").value,
-            "AZURE_OPENAI_ENDPOINT": client.get_secret("azure-openai-endpoint").value,
-            "AZURE_OPENAI_DEPLOYMENT": client.get_secret("azure-openai-deployment").value,
-        }
+        credential = DefaultAzureCredential()
+        print("🔑 DefaultAzureCredential created OK")
     except Exception as e:
-        raise RuntimeError(f"❌ Failed to load secrets from Key Vault: {e}")
+        print("❌ DefaultAzureCredential init FAILED:", e)
 
+    client = SecretClient(vault_url=url, credential=credential)
 
-def load_from_env():
-    """Fallback loader for local .env usage."""
+    secrets = {}
 
-    print("📄 Loading secrets from local .env file...")
+    try:
+        print("📥 Fetching list of secrets...")
+        props = list(client.list_properties_of_secrets())
+        print("FOUND SECRETS:", [p.name for p in props])
 
-    return {
-        "AZURE_SPEECH_KEY": os.getenv("AZURE_SPEECH_KEY"),
-        "AZURE_SPEECH_REGION": os.getenv("AZURE_SPEECH_REGION"),
-        "AZURE_OPENAI_API_KEY": os.getenv("AZURE_OPENAI_API_KEY"),
-        "AZURE_OPENAI_ENDPOINT": os.getenv("AZURE_OPENAI_ENDPOINT"),
-        "AZURE_OPENAI_DEPLOYMENT": os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-    }
+        for p in props:
+            val = client.get_secret(p.name).value
+            secrets[p.name] = val
 
+    except Exception as e:
+        print("❌ ERROR while listing secrets:", e)
 
-# ----------------------------------------------------------
-# 4) MAIN CONFIG LOADER
-# ----------------------------------------------------------
-def load_config():
-    if USE_KEYVAULT:
-        print("🔧 USE_KEYVAULT = true → loading from Azure Key Vault")
-        return load_from_keyvault()
-    else:
-        print("🔧 USE_KEYVAULT = false → loading from .env")
-        return load_from_env()
+    print("📦 SECRETS LOADED:", secrets)
 
+    # Map exactly by the names in your KeyVault
+    CONFIG["AZURE_SPEECH_KEY"]    = secrets.get("azure-speech-key")
+    CONFIG["AZURE_SPEECH_REGION"] = secrets.get("azure-speech-region")
 
-CONFIG = load_config()
+else:
+    CONFIG["AZURE_SPEECH_KEY"] = os.getenv("AZURE_SPEECH_KEY")
+    CONFIG["AZURE_SPEECH_REGION"] = os.getenv("AZURE_SPEECH_REGION")
 
-print("✅ Config loaded successfully:")
-print({
-    "speech_region": CONFIG.get("AZURE_SPEECH_REGION"),
-    "openai_endpoint": CONFIG.get("AZURE_OPENAI_ENDPOINT"),
-    "deployment": CONFIG.get("AZURE_OPENAI_DEPLOYMENT"),
-})
+print("CONFIG LOADED:", CONFIG)

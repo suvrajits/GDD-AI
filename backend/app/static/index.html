@@ -2,20 +2,19 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Realtime Speech → StableBuffer → LLM</title>
+    <title>Realtime Speech → Azure STT (PCM Worklet)</title>
     <style>
         body { font-family: sans-serif; padding: 20px; }
-        .box { border: 1px solid #ccc; padding: 10px; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <h2>🎤 Realtime Speech → StableBuffer → LLM</h2>
-    <button id="startBtn">Start Mic</button>
-    <button id="stopBtn">Stop</button>
+<h2>🎤 Realtime Speech → Azure STT (PCM Worklet)</h2>
 
-    <p><b>Partial:</b> <span id="partial"></span></p>
-    <p><b>Final:</b> <span id="final"></span></p>
-    <p><b>LLM:</b> <span id="llm"></span></p>
+<button id="startBtn">Start Mic</button>
+<button id="stopBtn">Stop</button>
+
+<p><b>Partial:</b> <span id="partial"></span></p>
+<p><b>Final:</b> <span id="final"></span></p>
 
 <script>
 let ws = null;
@@ -23,59 +22,42 @@ let audioContext = null;
 let workletNode = null;
 
 document.getElementById("startBtn").onclick = async () => {
-    console.log("🔊 Starting Worklet microphone stream...");
+    console.log("🎤 Starting microphone…");
 
-    // -----------------------
-    // 1. OPEN WEBSOCKET
-    // -----------------------
     ws = new WebSocket("ws://localhost:8000/ws/stream");
     ws.binaryType = "arraybuffer";
-
-    ws.onopen = () => console.log("WS connected");
-    ws.onclose = () => console.log("WS closed");
 
     ws.onmessage = (msg) => {
         const d = JSON.parse(msg.data);
         if (d.type === "partial") document.getElementById("partial").textContent = d.text;
         if (d.type === "final") document.getElementById("final").textContent = d.text;
-        if (d.type === "llm") document.getElementById("llm").textContent = d.content;
     };
 
-    // -----------------------
-    // 2. CAPTURE MIC STREAM
-    // -----------------------
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    ws.onopen = async () => {
+        console.log("WS connected");
 
-    audioContext = new AudioContext({
-        sampleRate: 16000   // REQUIRED for Azure STT
-    });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    // -----------------------
-    // 3. LOAD AUDIO WORKLET
-    // -----------------------
-    await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
+        audioContext = new AudioContext({ sampleRate: 16000 });
 
-    const source = audioContext.createMediaStreamSource(stream);
+        await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
 
-    // Create WorkletNode
-    workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
+        const source = audioContext.createMediaStreamSource(stream);
+        workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
 
-    // Receive Int16 PCM data from worklet and push to server
-    workletNode.port.onmessage = (event) => {
-        const pcmBytes = event.data;    
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(pcmBytes);
-        }
+        workletNode.port.onmessage = (event) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(event.data);
+            }
+        };
+
+        source.connect(workletNode);
+        console.log("🎤 PCM Worklet streaming ACTIVE");
     };
-
-    // Start pipeline
-    source.connect(workletNode);
-
-    console.log("🎤 Worklet + WS streaming ACTIVE");
 };
 
 document.getElementById("stopBtn").onclick = () => {
-    console.log("🛑 STOP STREAM");
+    console.log("🛑 Stopping…");
 
     try { if (workletNode) workletNode.disconnect(); } catch {}
     try { if (audioContext) audioContext.close(); } catch {}
