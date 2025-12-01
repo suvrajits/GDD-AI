@@ -1,52 +1,42 @@
-// /static/app.js (REPLACE your current file with this)
+// static/app.js
 
-/* ---------- State ---------- */
+/* --------------------------------------------------
+   State
+-------------------------------------------------- */
 let ws = null;
 let audioContext = null;
 let workletNode = null;
 
-let currentAiDiv = null;   // AI streaming block
+let currentAiDiv = null;
 let micActive = false;
 
-/* ---------- Message helpers ---------- */
-
+/* --------------------------------------------------
+   Chat UI helpers
+-------------------------------------------------- */
 function appendMessage(text, role, opts = {}) {
     const div = document.createElement("div");
     div.className = "msg " + role + (opts.streaming ? " streaming" : "");
-    
+
     if (role === "ai") {
-        const content = document.createElement("div");
-        content.className = "content";
-        content.textContent = text || "";
-        div.appendChild(content);
+        const wrap = document.createElement("div");
+        wrap.className = "content";
+        wrap.textContent = text;
+        div.appendChild(wrap);
     } else {
         div.textContent = text;
     }
 
-    const messages = document.getElementById("messages");
-    messages.appendChild(div);
+    document.getElementById("messages").appendChild(div);
     messages.scrollTop = messages.scrollHeight;
-
     return div;
 }
 
 function appendToAI(text) {
-    // ensure we always access the messages container safely
-    const messages = document.getElementById("messages");
-
     if (!currentAiDiv) {
         currentAiDiv = appendMessage("", "ai", { streaming: true });
     }
+    currentAiDiv.querySelector(".content").textContent += text;
 
-    const contentEl = currentAiDiv.querySelector(".content");
-    if (contentEl) {
-        contentEl.textContent += text;
-    } else {
-        // fallback: append as plain text
-        currentAiDiv.textContent += text;
-    }
-
-    // scroll safely
     messages.scrollTop = messages.scrollHeight;
 }
 
@@ -57,165 +47,116 @@ function finalizeAI() {
     }
 }
 
-/* ---------- WebSocket Handling ---------- */
-
+/* --------------------------------------------------
+   WebSocket
+-------------------------------------------------- */
 function connectWS() {
-    // prevent duplicate WS
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("WS already open");
-        return;
-    }
+    if (ws && ws.readyState === WebSocket.OPEN) return;
 
     ws = new WebSocket("ws://localhost:8000/ws/stream");
     ws.binaryType = "arraybuffer";
 
     ws.onmessage = (msg) => {
-        try {
-            const d = JSON.parse(msg.data);
+        const d = JSON.parse(msg.data);
 
-            if (d.type === "partial") {
-                // optional: show partial STT somewhere
-            }
+        if (d.type === "final") {
+            appendMessage(d.text, "user");
+            finalizeAI();
+        }
 
-            if (d.type === "final") {
-                appendMessage(d.text, "user");
-                finalizeAI();
-            }
+        if (d.type === "llm_stream") {
+            // auto-stop mic so it doesn't record during LLM response
+            if (micActive) stopMic(false);
 
-            if (d.type === "llm_stream") {
-                appendToAI(d.token);
-            }
+            appendToAI(d.token);
+        }
 
-            if (d.type === "llm_done") {
-                finalizeAI();
-            }
-
-            if (d.type === "error") {
-                appendMessage(`[ERROR] ${d.msg}`, "ai");
-                finalizeAI();
-            }
-        } catch (e) {
-            console.error("Failed to handle ws message:", e, msg.data);
+        if (d.type === "llm_done") {
+            finalizeAI();
         }
     };
 
     ws.onopen = () => {
         console.log("WS connected");
-        // start mic streaming once websocket is ready
-        startMicStreaming().catch(err => {
-            console.error("startMicStreaming error:", err);
-        });
+        // begin STT stream
+        startMicStreaming();
     };
 
-    ws.onclose = (ev) => {
-        console.log("WS closed", ev);
-        // cleanup audio if still active
-        stopMic(false); // don't close WS again
-    };
-
-    ws.onerror = (err) => {
-        console.error("WS error:", err);
-    };
+    ws.onclose = () => stopMic(false);
 }
 
-/* ---------- Microphone + PCM Worklet ---------- */
-
+/* --------------------------------------------------
+   Microphone
+-------------------------------------------------- */
 async function startMicStreaming() {
-    // prevent starting twice
     if (micActive) return;
     micActive = true;
 
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext({ sampleRate: 16000 });
 
-        audioContext = new AudioContext({ sampleRate: 16000 });
-        await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
+    await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
 
-        const source = audioContext.createMediaStreamSource(stream);
-        workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
+    const source = audioContext.createMediaStreamSource(stream);
+    workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
 
-        workletNode.port.onmessage = (event) => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                try {
-                    ws.send(event.data);
-                } catch (e) {
-                    console.error("Failed to send PCM frame:", e);
-                }
-            }
-        };
+    workletNode.port.onmessage = (event) => {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(event.data);
+    };
 
-        source.connect(workletNode);
-
-        console.log("Mic streaming started");
-    } catch (e) {
-        micActive = false;
-        console.error("Error accessing microphone / starting worklet:", e);
-        appendMessage("[Microphone error] " + e.message, "ai");
-    }
+    source.connect(workletNode);
 }
 
 function stopMic(closeWs = true) {
-    // stop audio nodes
     micActive = false;
-    try { if (workletNode) workletNode.disconnect(); } catch (e) {}
-    try { if (audioContext) audioContext.close(); } catch (e) {}
+
+    try { workletNode?.disconnect(); } catch {}
+    try { audioContext?.close(); } catch {}
 
     workletNode = null;
     audioContext = null;
 
-    // optionally close WS; default true for stop button, false when ws.onclose triggers
-    if (closeWs && ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.close(); } catch (e) {}
-    }
+    if (closeWs && ws?.readyState === WebSocket.OPEN) ws.close();
 }
 
-/* ---------- UI Buttons ---------- */
-
+/* --------------------------------------------------
+   UI buttons
+-------------------------------------------------- */
 document.getElementById("btnStartMic").onclick = () => {
-    // toggle mic + ws
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        connectWS();
-    } else if (!micActive) {
-        startMicStreaming();
-    } else {
-        // already active — pause mic
-        stopMic(false);
-    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+    else if (!micActive) startMicStreaming();
+    else stopMic(false);
 };
 
-document.getElementById("btnStopMic").onclick = () => {
-    stopMic(true);
-};
+document.getElementById("btnStopMic").onclick = () => stopMic(true);
 
-/* ---------- Text Sending ---------- */
-
+/* --------------------------------------------------
+   Text chat
+-------------------------------------------------- */
 const textInput = document.getElementById("textInput");
 const btnSend = document.getElementById("btnSend");
 
-btnSend.onclick = () => {
-    sendTextMessage();
-};
-
+btnSend.onclick = () => sendText();
 textInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        sendTextMessage();
+        sendText();
     }
 });
 
-function sendTextMessage() {
-    const text = textInput.value.trim();
-    if (!text) return;
+function sendText() {
+    const msg = textInput.value.trim();
+    if (!msg) return;
 
-    appendMessage(text, "user");
+    appendMessage(msg, "user");
     textInput.value = "";
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "text",
-            text: text
+            text: msg
         }));
     } else {
-        appendMessage("[offline] Cannot send — WS not connected", "ai");
+        appendMessage("[offline] WebSocket not connected", "ai");
     }
 }

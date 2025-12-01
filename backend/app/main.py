@@ -5,6 +5,7 @@ load_dotenv()
 import os
 import uuid
 import asyncio
+import json
 
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
@@ -13,12 +14,14 @@ import azure.cognitiveservices.speech as speechsdk
 from .config import CONFIG
 from .llm_orchestrator import stream_llm
 
+# Track manual stop flags for LLM
+llm_stop_flags = {}
 
 app = FastAPI()
 
+# Serve static files
 static_path = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
-
 
 AZURE_SPEECH_KEY = CONFIG["AZURE_SPEECH_KEY"]
 AZURE_SPEECH_REGION = CONFIG["AZURE_SPEECH_REGION"]
@@ -27,18 +30,42 @@ print("🔐 Azure Speech Key Loaded:", AZURE_SPEECH_KEY[:5] + "****")
 print("🌍 Region:", AZURE_SPEECH_REGION)
 
 
+# --------------------------------------------------
+# TEXT CHAT HANDLER (manual messages)
+# --------------------------------------------------
+async def handle_text_message(ws: WebSocket, text: str, session: str):
+    print("📝 Text message:", text)
+
+    # Deliver to UI as "user" bubble
+    await ws.send_json({"type": "final", "text": text})
+
+    # Reset stop flag for this session
+    llm_stop_flags[session] = False
+
+    # Stream LLM tokens
+    async for token in stream_llm(text):
+        if llm_stop_flags.get(session):
+            print("⛔ Text LLM interrupted")
+            break
+        await ws.send_json({"type": "llm_stream", "token": token})
+
+    await ws.send_json({"type": "llm_done"})
+    print("✨ Text LLM response finished.")
+
+
+# --------------------------------------------------
+# MAIN STREAM (STT + Text Chat + LLM)
+# --------------------------------------------------
 async def azure_stream(ws: WebSocket):
     session = str(uuid.uuid4())
     print(f"WS connected: {session}")
 
-    # -------------------------------
-    # 1. Azure Speech Push Stream
-    # -------------------------------
+    # Setup Azure audio stream
     push_stream = speechsdk.audio.PushAudioInputStream(
         stream_format=speechsdk.audio.AudioStreamFormat(
             samples_per_second=16000,
             bits_per_sample=16,
-            channels=1
+            channels=1,
         )
     )
 
@@ -53,9 +80,7 @@ async def azure_stream(ws: WebSocket):
 
     loop = asyncio.get_event_loop()
 
-    # -------------------------------
-    # PARTIAL STT CALLBACK
-    # -------------------------------
+    # Partial STT
     def recognizing(evt):
         asyncio.run_coroutine_threadsafe(
             ws.send_json({
@@ -65,9 +90,7 @@ async def azure_stream(ws: WebSocket):
             loop
         )
 
-    # -------------------------------
-    # FINAL STT CALLBACK
-    # -------------------------------
+    # Final STT
     def recognized(evt):
         if evt.result.reason != speechsdk.ResultReason.RecognizedSpeech:
             return
@@ -75,56 +98,77 @@ async def azure_stream(ws: WebSocket):
         text = evt.result.text
         print("🟢 Final STT:", text)
 
-        async def handle_final():
-            # 1) Send STT transcript
+        async def handle_final_stt():
             await ws.send_json({"type": "final", "text": text})
 
-            print("🔥 LLM CALL ->", text)
+            llm_stop_flags[session] = False
 
-            # 2) Stream LLM tokens
             try:
                 async for token in stream_llm(text):
+                    if llm_stop_flags.get(session):
+                        print("⛔ STT LLM interrupted")
+                        break
                     await ws.send_json({"type": "llm_stream", "token": token})
             except Exception as e:
-                await ws.send_json({"type": "llm_stream", "token": f"[LLM ERROR] {e}"})
-                print("❌ LLM Streaming Error:", e)
+                await ws.send_json({
+                    "type": "llm_stream",
+                    "token": f"[LLM ERROR] {e}"
+                })
+                print("❌ LLM Stream error:", e)
 
-            # 3) Completion marker
             await ws.send_json({"type": "llm_done"})
-            print("✨ LLM stream finished.")
+            print("✨ STT LLM done.")
 
-        asyncio.run_coroutine_threadsafe(handle_final(), loop)
+        asyncio.run_coroutine_threadsafe(handle_final_stt(), loop)
 
     recognizer.recognizing.connect(recognizing)
     recognizer.recognized.connect(recognized)
 
-    # -------------------------------
-    # START SPEECH RECOGNITION
-    # -------------------------------
     recognizer.start_continuous_recognition_async().get()
     print("🎤 Azure STT started successfully")
 
-    # -------------------------------
-    # MAIN WS LOOP
-    # -------------------------------
+    # --------------------------------------------------
+    # MAIN WEBSOCKET LOOP
+    # --------------------------------------------------
     try:
         while True:
-            try:
-                msg = await ws.receive()
+            msg = await ws.receive()
 
-                if msg["type"] == "websocket.disconnect":
-                    print("⚠ Client requested WS close.")
-                    break
-
-                if msg.get("bytes"):
-                    push_stream.write(msg["bytes"])
-
-            except Exception as e:
-                print("⚠ WS receive error:", e)
+            # Client closed WS
+            if msg["type"] == "websocket.disconnect":
+                print("⚠ WS disconnect by client")
                 break
 
+            # ----------------------------------------------
+            # TEXT message (JSON from chat box)
+            # ----------------------------------------------
+            if msg.get("text"):
+                try:
+                    data = json.loads(msg["text"])
+                except:
+                    data = None
+
+                if data:
+                    # Manual chat text
+                    if data.get("type") == "text":
+                        asyncio.create_task(
+                            handle_text_message(ws, data["text"], session)
+                        )
+                        continue
+
+                    # Explicit stop
+                    if data.get("type") == "stop_llm":
+                        llm_stop_flags[session] = True
+                        continue
+
+            # ----------------------------------------------
+            # AUDIO BYTES (PCM)
+            # ----------------------------------------------
+            if msg.get("bytes"):
+                push_stream.write(msg["bytes"])
+
     finally:
-        print("🟡 Cleaning up STT + WS")
+        print(f"🟡 Cleaning WS session {session}")
 
         try:
             push_stream.close()
@@ -133,10 +177,10 @@ async def azure_stream(ws: WebSocket):
 
         try:
             recognizer.stop_continuous_recognition()
-        except Exception as e:
-            print("⚠ Error stopping STT:", e)
+        except:
+            pass
 
-        print("WS closed:", session)
+        print(f"WS closed: {session}")
 
 
 @app.websocket("/ws/stream")
