@@ -10,6 +10,40 @@ let workletNode = null;
 let currentAiDiv = null;
 let micActive = false;
 
+let ttsAudioContext = null;
+
+/* --------------------------------------------------
+   TTS PCM Playback
+-------------------------------------------------- */
+function playPcmChunk(buffer) {
+    // Initialize audio context if not already
+    if (!ttsAudioContext) {
+        ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    const pcm16 = new Int16Array(buffer);
+    const float32 = new Float32Array(pcm16.length);
+
+    for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768; // normalize to [-1, 1]
+    }
+
+    const audioBuffer = ttsAudioContext.createBuffer(
+        1,                 // mono
+        float32.length,
+        16000              // Azure PCM sample rate
+    );
+
+    audioBuffer.getChannelData(0).set(float32);
+
+    const source = ttsAudioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ttsAudioContext.destination);
+
+    source.start();
+}
+
+
 /* --------------------------------------------------
    Chat UI helpers
 -------------------------------------------------- */
@@ -56,8 +90,32 @@ function connectWS() {
     ws = new WebSocket("ws://localhost:8000/ws/stream");
     ws.binaryType = "arraybuffer";
 
+    ws.onopen = () => {
+        console.log("WS connected");
+        startMicStreaming();
+    };
+
+    ws.onclose = () => stopMic(false);
+
     ws.onmessage = (msg) => {
-        const d = JSON.parse(msg.data);
+        // ----------------------------------------------------
+        // 1) Handle binary audio FIRST (Azure TTS PCM)
+        // ----------------------------------------------------
+        if (msg.data instanceof ArrayBuffer) {
+            playPcmChunk(msg.data);
+            return;
+        }
+
+        // ----------------------------------------------------
+        // 2) Then handle JSON text messages
+        // ----------------------------------------------------
+        let d = null;
+        try {
+            d = JSON.parse(msg.data);
+        } catch (err) {
+            console.error("JSON parse error:", err, msg.data);
+            return;
+        }
 
         if (d.type === "final") {
             appendMessage(d.text, "user");
@@ -65,9 +123,8 @@ function connectWS() {
         }
 
         if (d.type === "llm_stream") {
-            // auto-stop mic so it doesn't record during LLM response
+            // stop Mic while AI is speaking
             if (micActive) stopMic(false);
-
             appendToAI(d.token);
         }
 
@@ -75,18 +132,10 @@ function connectWS() {
             finalizeAI();
         }
     };
-
-    ws.onopen = () => {
-        console.log("WS connected");
-        // begin STT stream
-        startMicStreaming();
-    };
-
-    ws.onclose = () => stopMic(false);
 }
 
 /* --------------------------------------------------
-   Microphone
+   Microphone streaming
 -------------------------------------------------- */
 async function startMicStreaming() {
     if (micActive) return;
@@ -137,6 +186,7 @@ const textInput = document.getElementById("textInput");
 const btnSend = document.getElementById("btnSend");
 
 btnSend.onclick = () => sendText();
+
 textInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -148,7 +198,6 @@ function sendText() {
     const msg = textInput.value.trim();
     if (!msg) return;
 
-    // DO NOT append locally — wait for server "final"
     textInput.value = "";
 
     if (ws?.readyState === WebSocket.OPEN) {
@@ -160,4 +209,3 @@ function sendText() {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
 }
-
