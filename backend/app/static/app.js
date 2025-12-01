@@ -148,7 +148,7 @@ function sendText() {
     const msg = textInput.value.trim();
     if (!msg) return;
 
-    appendMessage(msg, "user");
+    // DO NOT append locally — wait for server "final"
     textInput.value = "";
 
     if (ws?.readyState === WebSocket.OPEN) {
@@ -160,3 +160,4 @@ function sendText() {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
 }
+
