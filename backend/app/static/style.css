@@ -116,36 +116,20 @@ body {
     font-size: 15px;
 }
 
-/* Smaller crisp buttons */
 .btn {
-    padding: 8px 14px;
+    padding: 10px 16px;
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 15px;
     cursor: pointer;
     border: none;
     font-weight: 600;
-    transition: 0.15s ease;
 }
 
 .btn-send { background: #007bff; color: white; }
 .btn-mic  { background: #4caf50; color: white; }
 .btn-stop { background: #e53935; color: white; }
 
-.btn:hover {
-    transform: translateY(-1px);
-    opacity: 0.92;
-}
-
-/* Input field slightly smaller */
-.input-bar input {
-    flex: 1;
-    padding: 10px;
-    border-radius: 6px;
-    border: 1px solid #ccc;
-    margin-right: 10px;
-    font-size: 14px;
-}
-
+.btn:hover { opacity: 0.9; }
 
 /* ---------- Workspace ---------- */
 
