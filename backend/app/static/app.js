@@ -4,24 +4,23 @@
 -------------------------------------------------- */
 let ws = null;
 let wsReady = null;
+
 let audioContext = null;
 let workletNode = null;
-
-let currentAiDiv = null;
 let micActive = false;
 
 let ttsAudioContext = null;
 
-// voice-mode flag (controlled by server events)
-let currentSessionIsVoice = false;
+let currentAiDiv = null;
+let currentSessionIsVoice = false;   // voice-mode flag
 
 /* --------------------------------------------------
-   Stop all audio playback (immediate)
+   stopAllPlayback() — stops audio immediately but ensures audio context can be recreated
 -------------------------------------------------- */
 function stopAllPlayback() {
     try {
-        if (ttsAudioContext) {
-            // close will stop currently playing audio immediately
+        if (ttsAudioContext && typeof ttsAudioContext.close === "function") {
+            // close stops playback; we set to null so next play recreates new context
             ttsAudioContext.close();
         }
     } catch (e) {
@@ -30,7 +29,6 @@ function stopAllPlayback() {
         ttsAudioContext = null;
     }
 
-    // finalize current AI bubble if present
     if (currentAiDiv) {
         currentAiDiv.classList.remove("streaming");
         currentAiDiv = null;
@@ -38,11 +36,16 @@ function stopAllPlayback() {
 }
 
 /* --------------------------------------------------
-   PCM playback (raw PCM16)
+   playPcmChunk() — raw PCM16 playback with recreated AudioContext if needed
 -------------------------------------------------- */
 function playPcmChunk(buffer) {
     if (!ttsAudioContext) {
-        ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        try {
+            ttsAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.error("Could not create AudioContext:", e);
+            return;
+        }
     }
 
     const pcm16 = new Int16Array(buffer);
@@ -58,7 +61,11 @@ function playPcmChunk(buffer) {
     const src = ttsAudioContext.createBufferSource();
     src.buffer = audioBuffer;
     src.connect(ttsAudioContext.destination);
-    src.start();
+    try {
+        src.start();
+    } catch (e) {
+        console.warn("Error starting audio source:", e);
+    }
 }
 
 /* --------------------------------------------------
@@ -147,7 +154,6 @@ function connectWS() {
             return;
         }
 
-        // user final (typed or STT final)
         if (d.type === "final") {
             if (d.text && d.text.trim()) {
                 appendMessage(d.text, "user");
@@ -156,7 +162,6 @@ function connectWS() {
             return;
         }
 
-        // typed LLM streaming (only show when NOT voice-driven)
         if (d.type === "llm_stream") {
             if (!currentSessionIsVoice && d.token) {
                 appendToAI(d.token);
@@ -169,7 +174,6 @@ function connectWS() {
             return;
         }
 
-        // sentence_start -> reveal sentence and mark voice mode
         if (d.type === "sentence_start") {
             const clean = (d.text || "").trim();
             if (!clean) return;
@@ -182,22 +186,21 @@ function connectWS() {
             return;
         }
 
-        // voice_done -> reset voice-mode and finalize bubble
         if (d.type === "voice_done") {
             currentSessionIsVoice = false;
             finalizeAI();
             return;
         }
 
-        // stop_all -> immediate playback stop (barge-in or manual stop)
         if (d.type === "stop_all") {
             stopAllPlayback();
             currentSessionIsVoice = false;
+            finalizeAI();
             return;
         }
 
-        // partial STT - ignore for now
         if (d.type === "partial") {
+            // ignore partial transcripts in UI to avoid noise
             return;
         }
     };
@@ -253,7 +256,6 @@ document.getElementById("btnStartMic").onclick = async () => {
 };
 
 document.getElementById("btnStopMic").onclick = async () => {
-    // manual stop -> tell backend to cancel everything
     try {
         await connectWS();
         if (ws?.readyState === WebSocket.OPEN) {
@@ -262,6 +264,9 @@ document.getElementById("btnStopMic").onclick = async () => {
     } catch (e) {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
+
+    // stop playback locally too
+    stopAllPlayback();
 };
 
 const textInput = document.getElementById("textInput");
@@ -287,6 +292,11 @@ async function sendText() {
         appendMessage("[offline] WebSocket not connected", "ai");
         return;
     }
+
+    // ensure text-mode (no voice)
+    currentSessionIsVoice = false;
+    stopAllPlayback();
+    finalizeAI();
 
     try {
         ws.send(JSON.stringify({ type: "text", text: msg }));
