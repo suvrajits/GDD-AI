@@ -10,14 +10,31 @@
 
 <div class="layout">
 
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <h2>🎮 Game Genie AI</h2>
-        <button class="side-btn">🆕 New Concept</button>
-        <button class="side-btn">🎨 Visual Ideas</button>
-        <button class="side-btn">🔁 Game Loops</button>
-        <button class="side-btn">💰 Monetisation</button>
-        <button class="side-btn">⚙️ Mechanics</button>
+    <!-- LEFT Sidebar -->
+    <div class="sidebar" id="sidebar">   
+        <div class="sidebar-toggle" id="toggleLeft">⬅️</div>   <!-- ⬅️ NEW -->
+
+        <h2 class="sidebar-title">
+            <span class="icon">🎮</span>
+            <span class="label">Game Genie AI</span>
+        </h2>
+
+
+        <button class="side-btn">
+            🆕 <span class="label">New Concept</span>
+        </button>
+        <button class="side-btn">
+            🎨 <span class="label">Visual Ideas</span>
+        </button>
+        <button class="side-btn">
+            🔁 <span class="label">Game Loops</span>
+        </button>
+        <button class="side-btn">
+            💰 <span class="label">Monetisation</span>
+        </button>
+        <button class="side-btn">
+            ⚙️ <span class="label">Mechanics</span>
+        </button>
     </div>
 
     <!-- Chat Panel -->
@@ -26,29 +43,21 @@
 
         <div class="input-bar">
             <input id="textInput" placeholder="Type a message..." />
-
-            <button id="btnSend" class="btn btn-send">
-                ✉️
-            </button>
-
-            <button id="btnStartMic" class="btn btn-mic">
-                🎙️
-            </button>
-
-            <button id="btnStopMic" class="btn btn-stop">
-                ⛔
-            </button>
+            <button id="btnSend" class="btn btn-send">✉️</button>
+            <button id="btnStartMic" class="btn btn-mic">🎙️</button>
+            <button id="btnStopMic" class="btn btn-stop">⛔</button>
         </div>
-
     </div>
 
-    <!-- Workspace -->
-    <div class="workspace">
+    <!-- RIGHT Workspace -->
+    <div class="workspace" id="workspace">   
+        <div class="workspace-toggle" id="toggleRight">➡️</div>  <!-- ⬅️ NEW -->
+
         <h3>📌 Workspace</h3>
         <p>Pin ideas, drag notes, brainstorm loops…</p>
     </div>
-
 </div>
+
 
 <script src="/static/app.js"></script>
 </body>

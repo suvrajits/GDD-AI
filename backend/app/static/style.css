@@ -1,4 +1,6 @@
-/* ---------- Layout Containers ---------- */
+/* =========================================
+   GLOBAL LAYOUT
+========================================= */
 
 body {
     margin: 0;
@@ -14,22 +16,59 @@ body {
 .layout {
     display: flex;
     flex-direction: row;
-    height: calc(100vh - 60px);
+    height: 100vh;          /* 🔥 FIX: full height */
+    transition: all 0.25s ease;
+    position: relative;     /* required for z-index layering */
 }
 
-/* ---------- Sidebar ---------- */
+
+/* =========================================
+   SIDEBAR (LEFT)
+========================================= */
 
 .sidebar {
     width: 260px;
+    min-width: 260px;
     background: #1c1f24;
     color: white;
     padding: 20px;
     box-sizing: border-box;
+    position: relative;
+    transition: width 0.25s ease, min-width 0.25s ease;
 }
 
-.sidebar h2 {
-    margin-top: 0;
-    font-size: 20px;
+.sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-title .icon {
+    font-size: 18px;
+}
+
+.sidebar-title .label {
+    font-size: 18px;
+}
+
+/* Collapsed Sidebar */
+.sidebar.collapsed {
+    width: 60px;
+    min-width: 60px;
+}
+
+/* Hide only text label — keep icon */
+.sidebar.collapsed .sidebar-title .label {
+    display: none !important;
+}
+
+/* Hide button labels in collapsed mode */
+.sidebar.collapsed .side-btn .label {
+    display: none !important;
+}
+
+.sidebar.collapsed .side-btn {
+    text-align: center;
 }
 
 .side-btn {
@@ -39,32 +78,35 @@ body {
     padding: 14px;
     margin-bottom: 12px;
     color: #ddd;
-    text-align: left;
     border-radius: 6px;
     cursor: pointer;
     font-size: 15px;
+    text-align: left;
 }
 
 .side-btn:hover {
     background: #394048;
 }
 
-/* ---------- Chat Panel ---------- */
+/* =========================================
+   CHAT PANEL (CENTER)
+========================================= */
 
 .chat-panel {
     flex: 1;
     display: flex;
     flex-direction: column;
     background: #fafafa;
+    transition: flex 0.25s ease, width 0.25s ease;
 }
 
 #messages {
     flex: 1;
     overflow-y: auto;
     padding: 20px;
-    box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
 }
 
 /* Message bubbles */
@@ -74,8 +116,8 @@ body {
     max-width: 70%;
     border-radius: 10px;
     white-space: pre-wrap;
-    line-height: 1.4;
     font-size: 15px;
+    line-height: 1.4;
 }
 
 .user {
@@ -98,7 +140,9 @@ body {
     white-space: pre-wrap;
 }
 
-/* ---------- Bottom Input Bar ---------- */
+/* =========================================
+   INPUT BAR
+========================================= */
 
 .input-bar {
     display: flex;
@@ -131,15 +175,62 @@ body {
 
 .btn:hover { opacity: 0.9; }
 
-/* ---------- Workspace ---------- */
+/* =========================================
+   WORKSPACE (RIGHT)
+========================================= */
 
 .workspace {
     width: 380px;
+    min-width: 380px;
     background: #ffffff;
     border-left: 1px solid #ddd;
     padding: 20px;
+    position: relative;
+    transition: width 0.25s ease, min-width 0.25s ease;
 }
 
-.workspace h3 {
-    margin-top: 0;
+.workspace.collapsed {
+    width: 40px;
+    min-width: 40px;
 }
+
+.workspace.collapsed h3,
+.workspace.collapsed p {
+    display: none;
+}
+
+/* =========================================
+   COLLAPSE / EXPAND TOGGLE BUTTONS
+========================================= */
+
+.sidebar-toggle,
+.workspace-toggle {
+    position: absolute;
+    top: 22px;
+    width: 22px;
+    height: 22px;
+
+    background: rgba(255, 255, 255, 0.12);
+    color: #bbb;
+
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 22px;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+
+    z-index: 2000;
+    box-shadow: 0 0 4px rgba(0,0,0,0.25);
+    transition: background 0.2s, color 0.2s;
+}
+
+.sidebar-toggle:hover,
+.workspace-toggle:hover {
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+/* Position toggles OUTSIDE the edges */
+.sidebar-toggle { right: -12px; }
+.workspace-toggle { left: -12px; }

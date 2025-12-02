@@ -304,3 +304,23 @@ async function sendText() {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
 }
+
+/* --------------------------------------------------
+   Sidebar + Workspace Slide Toggles
+-------------------------------------------------- */
+
+const sidebar = document.getElementById("sidebar");
+const workspace = document.getElementById("workspace");
+
+const toggleLeft = document.getElementById("toggleLeft");
+const toggleRight = document.getElementById("toggleRight");
+
+toggleLeft.onclick = () => {
+    sidebar.classList.toggle("collapsed");
+    toggleLeft.textContent = sidebar.classList.contains("collapsed") ? "➡️" : "⬅️";
+};
+
+toggleRight.onclick = () => {
+    workspace.classList.toggle("collapsed");
+    toggleRight.textContent = workspace.classList.contains("collapsed") ? "⬅️" : "➡️";
+};
