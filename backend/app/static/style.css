@@ -205,9 +205,11 @@ body {
 }
 
 .workspace.collapsed h3,
-.workspace.collapsed p {
+.workspace.collapsed p,
+.workspace.collapsed .upload-box {
     display: none;
 }
+
 
 /* =========================================
    TOGGLE BUTTONS
@@ -249,4 +251,65 @@ body {
     background: #3a8d40 !important;  /* darker green */
     box-shadow: inset 0 0 6px rgba(0,0,0,0.35);
     transform: translateY(1px);
+}
+
+/* Upload buttons */
+.btn-upload {
+    background: #666;
+    color: white;
+    margin-right: 8px;
+}
+
+.btn-upload:hover {
+    background: #555;
+}
+
+/* Small buttons inside workspace */
+.small-btn {
+    padding: 6px 10px;
+    font-size: 13px;
+    margin-top: 6px;
+}
+
+.status-text {
+    font-size: 13px;
+    color: #444;
+    margin-top: 6px;
+}
+
+.upload-box {
+    margin-top: 20px;
+    padding: 12px;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.embed-check {
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.kb-list {
+    margin-top: 10px;
+    background: #eee;
+    padding: 8px;
+    border-radius: 6px;
+}
+
+.kb-item {
+    background: #fff;
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.small-btn {
+    padding: 6px 10px;
+    font-size: 13px;
 }

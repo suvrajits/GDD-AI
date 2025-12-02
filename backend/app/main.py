@@ -15,6 +15,7 @@ import azure.cognitiveservices.speech as speechsdk
 
 from .config import CONFIG
 from .llm_orchestrator import stream_llm
+from app.routes.rag_routes import router as rag_router
 
 # -----------------------
 # GLOBAL STATE
@@ -42,6 +43,7 @@ MAX_PADDING = 0.08      # 80ms
 # -----------------------
 app = FastAPI()
 static_path = os.path.join(os.path.dirname(__file__), "static")
+app.include_router(rag_router)
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 
 AZURE_SPEECH_KEY = CONFIG["AZURE_SPEECH_KEY"]

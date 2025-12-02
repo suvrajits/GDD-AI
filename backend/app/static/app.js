@@ -337,3 +337,72 @@ toggleRight.onclick = () => {
     workspace.classList.toggle("collapsed");
     toggleRight.textContent = workspace.classList.contains("collapsed") ? "⬅️" : "➡️";
 };
+
+/* --------------------------------------------------
+   RAG Upload (Workspace) — Single-button Upload+Embed
+-------------------------------------------------- */
+/* --------------------------------------------------
+   RAG Upload (Workspace) — Single-button Upload+Embed
+-------------------------------------------------- */
+const uploadBtn = document.getElementById("btnUploadEmbed");
+const fileInput = document.getElementById("ragFileInput");
+const statusBox = document.getElementById("uploadStatus");
+const kbList = document.getElementById("kbList");
+
+// Chat-box upload button
+const chatUploadBtn = document.getElementById("btnUploadChat");
+const chatFileInput = document.getElementById("ragFileInputChat");
+
+chatUploadBtn.onclick = () => chatFileInput.click();
+chatFileInput.onchange = () => triggerUpload(chatFileInput.files);
+fileInput.onchange = () => triggerUpload(fileInput.files);
+
+uploadBtn.onclick = () => triggerUpload(fileInput.files);
+
+
+async function triggerUpload(files) {
+    if (!files || files.length === 0) return;
+
+    statusBox.textContent = "Uploading…";
+
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+
+    // 1) Upload
+    let res = await fetch("/rag/upload", { method: "POST", body: form });   
+    if (!res.ok) {
+        statusBox.textContent = "Upload failed ❌";
+        return;
+    }
+    let out = await res.json();
+    console.log("UPLOAD:", out);
+
+    statusBox.textContent = "Embedding…";
+
+    // 2) Ingest
+    let res2 = await fetch("/rag/ingest", { method: "POST" });
+    let out2 = await res2.json();
+    console.log("INGEST:", out2);
+
+    statusBox.textContent = "Embedded successfully ✔️ (" + out2.chunks + " chunks)";
+
+    refreshKBList();
+}
+
+async function refreshKBList() {
+    let res = await fetch("/rag/list");
+    let j = await res.json();
+    kbList.innerHTML = "";
+    j.files.forEach(f => {
+        let div = document.createElement("div");
+        div.className = "kb-item";
+        div.textContent = f;
+        kbList.appendChild(div);
+    });
+}
+
+
+window.addEventListener("DOMContentLoaded", () => {
+    refreshKBList();  
+});
+

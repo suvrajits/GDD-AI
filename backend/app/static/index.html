@@ -43,6 +43,8 @@
 
         <div class="input-bar">
             <input id="textInput" placeholder="Type a message..." />
+            <button id="btnUploadChat" class="btn btn-upload">📤</button>
+            <input id="ragFileInputChat" type="file" multiple style="display:none;" />
             <button id="btnSend" class="btn btn-send">✉️</button>
             <button id="btnStartMic" class="btn btn-mic">🎙️</button>
             <button id="btnStopMic" class="btn btn-stop">⛔</button>
@@ -50,12 +52,32 @@
     </div>
 
     <!-- RIGHT Workspace -->
-    <div class="workspace" id="workspace">   
-        <div class="workspace-toggle" id="toggleRight">➡️</div>  <!-- ⬅️ NEW -->
+    <div class="workspace collapsed" id="workspace">
+        <div class="workspace-toggle" id="toggleRight">➡️</div>
 
         <h3>📌 Workspace</h3>
         <p>Pin ideas, drag notes, brainstorm loops…</p>
+
+        <hr>
+
+        <div class="upload-box">
+            <h4>📤 Upload & Embed</h4>
+
+            <input id="ragFileInput" type="file" multiple style="margin-top:8px;" />
+
+            <button id="btnUploadEmbed" class="btn btn-upload small-btn">Upload + Embed</button>
+
+            <div id="uploadStatus" class="status-text"></div>
+
+            <h4 style="margin-top:16px;">Knowledge Base</h4>
+            <div id="kbList" class="kb-list"></div>
+        </div>
+
+
+
+
     </div>
+
 </div>
 
 

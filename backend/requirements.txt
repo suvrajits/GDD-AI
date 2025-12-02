@@ -1,0 +1,7 @@
+openai
+faiss-cpu
+beautifulsoup4
+tqdm
+sentence-transformers   # optional fallback
+numpy
+python-dotenv
