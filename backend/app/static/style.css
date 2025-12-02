@@ -313,3 +313,14 @@ body {
     padding: 6px 10px;
     font-size: 13px;
 }
+
+.kb-remove {
+    float: right;
+    cursor: pointer;
+    color: #c33;
+    font-weight: bold;
+}
+
+.kb-remove:hover {
+    color: #ff0000;
+}

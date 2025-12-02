@@ -384,19 +384,35 @@ async function triggerUpload(files) {
     let out2 = await res2.json();
     console.log("INGEST:", out2);
 
-    statusBox.textContent = "Embedded successfully ✔️ (" + out2.chunks + " chunks)";
+    statusBox.textContent = "Embedded successfully ✔️";
 
     refreshKBList();
 }
 
 async function refreshKBList() {
-    let res = await fetch("/rag/list");
+    let res = await fetch("/rag/embedded-files");
     let j = await res.json();
     kbList.innerHTML = "";
+
     j.files.forEach(f => {
         let div = document.createElement("div");
         div.className = "kb-item";
-        div.textContent = f;
+
+        // File name label
+        let label = document.createElement("span");
+        label.textContent = f;
+
+        // Remove button (❌)
+        let rm = document.createElement("span");
+        rm.textContent = "❌";
+        rm.className = "kb-remove";
+        rm.onclick = async () => {
+            await fetch(`/rag/file/${encodeURIComponent(f)}`, { method: "DELETE" });
+            refreshKBList();
+        };
+
+        div.appendChild(label);
+        div.appendChild(rm);
         kbList.appendChild(div);
     });
 }
