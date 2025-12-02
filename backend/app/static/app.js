@@ -215,8 +215,12 @@ async function startMicStreaming() {
     if (micActive) return;
     micActive = true;
 
+    // 🔥 NEW — visual state ON
+    document.getElementById("btnStartMic").classList.add("active");
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioContext = new AudioContext({ sampleRate: 16000 });
+
 
     await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
 
@@ -232,8 +236,13 @@ async function startMicStreaming() {
 
 function stopMic(closeWs = true) {
     micActive = false;
+
+    // 🔥 NEW — visual state OFF
+    document.getElementById("btnStartMic").classList.remove("active");
+
     try { workletNode?.disconnect(); } catch {}
     try { audioContext?.close(); } catch {}
+
     workletNode = null;
     audioContext = null;
 
@@ -251,9 +260,13 @@ document.getElementById("btnStartMic").onclick = async () => {
         return;
     }
 
-    if (!micActive) startMicStreaming();
-    else stopMic(false);
+    if (!micActive) {
+        startMicStreaming();   // mic turns ON
+    } else {
+        stopMic(false);        // mic turns OFF, websocket remains open
+    }
 };
+
 
 document.getElementById("btnStopMic").onclick = async () => {
     try {
