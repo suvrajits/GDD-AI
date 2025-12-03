@@ -1,0 +1,5 @@
+<speak version="1.0" xml:lang="en-IN">
+  <voice name="en-IN-NeerjaNeural">
+    {{TEXT_EN}}
+  </voice>
+</speak>

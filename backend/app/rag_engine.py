@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from openai import OpenAI, RateLimitError
 from tqdm import tqdm
 
+
 try:
     import faiss
 except ImportError:
@@ -363,28 +364,47 @@ class RAGEngine:
     # REBUILD FAISS INDEX FROM DOCSTORE
     # -------------------------------------------
     def _rebuild_faiss_index(self):
-        print("[RAG] Rebuilding FAISS index...")
+            print("[RAG] Rebuilding FAISS index...")
 
-        new_index = self._create_faiss_index()
-        texts = []
-        metas = []
+            new_index = self._create_faiss_index()
+            texts = []
+            metas = []
 
-        for key, entry in self.docstore.items():
-            texts.append(entry["text"])
-            metas.append(entry["meta"])
+            for key, entry in self.docstore.items():
+                texts.append(entry["text"])
+                metas.append(entry["meta"])
 
-        if not texts:
-            print("[RAG] No chunks left. Fresh FAISS index created.")
+            if not texts:
+                print("[RAG] No chunks left. Fresh FAISS index created.")
+                self.index = new_index
+                return
+
+            embeddings = self.embed_texts(texts)
+
+            vecs = np.asarray(embeddings, dtype=np.float32)
+            norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+            norms[norms == 0] = 1e-9
+            vecs = vecs / norms
+
+            new_index.add(vecs)
             self.index = new_index
-            return
+            print("[RAG] Rebuild complete.")
 
-        embeddings = self.embed_texts(texts)
 
-        vecs = np.asarray(embeddings, dtype=np.float32)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        norms[norms == 0] = 1e-9
-        vecs = vecs / norms
+async def retrieve_relevant_chunks(query: str, k: int = 4):
+    """
+    Utility function used by MetaAgent.
+    Returns concatenated text of top-k RAG results.
+    """
+    # ⛔ FIX: delayed import to avoid circular import
+    from app.routes.rag_routes import rag
 
-        new_index.add(vecs)
-        self.index = new_index
-        print("[RAG] Rebuild complete.")
+    try:
+        results = rag.search(query, k=k)
+        return "\n\n".join([
+            f"[{r['meta']['file']}] {r['text']}"
+            for r in results
+        ])
+    except Exception as e:
+        print("RAG search error:", e)
+        return ""

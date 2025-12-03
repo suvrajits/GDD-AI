@@ -1,0 +1,22 @@
+<speak version="1.0" xml:lang="en-IN"
+       xmlns:mstts="https://www.w3.org/2001/mstts">
+
+  <voice name="en-IN-NeerjaNeural">
+
+    <prosody rate="-3%" pitch="+4%" volume="+0dB">
+
+      <mstts:express-as style="calm" styledegree="1.4">
+
+        <break time="80ms"/>
+
+        <prosody rate="-4%" pitch="+5%">
+          {{TEXT_EN}}
+        </prosody>
+
+        <break strength="weak"/>
+
+      </mstts:express-as>
+    </prosody>
+
+  </voice>
+</speak>

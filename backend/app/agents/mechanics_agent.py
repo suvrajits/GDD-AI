@@ -1,7 +1,6 @@
 # app/agents/mechanics_agent.py
 
-from llm_orchestrator import call_openai_chat
-
+from app.llm_client import call_openai_chat
 
 class MechanicsAgent:
     """Responsible for core loop, systems, controls, game feel, and progression."""

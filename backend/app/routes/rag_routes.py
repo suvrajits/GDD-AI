@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from typing import List
 from pathlib import Path
 
+# Correct import (NO rag import)
 from app.rag_engine import RAGEngine
 
 router = APIRouter()
@@ -13,8 +14,13 @@ UPLOAD_DIR = Path("./data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # instantiate RAG engine (FAISS + Azure embeddings)
-# adjust embedding_dim if your embedding model differs
-rag = RAGEngine(index_dir="./data/faiss_index", embedding_dim=1536, batch_size=64, max_chunks_per_file=300)
+rag = RAGEngine(
+    index_dir="./data/faiss_index",
+    embedding_dim=1536,
+    batch_size=64,
+    max_chunks_per_file=300
+)
+
 
 @router.post("/rag/upload")
 async def upload_files(files: List[UploadFile] = File(...)):

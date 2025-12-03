@@ -1,7 +1,6 @@
 # app/agents/game_concept_agent.py
 
-from llm_orchestrator import call_openai_chat
-
+from app.llm_client import call_openai_chat
 
 class GameConceptAgent:
     """Responsible for genre, vision, pillars, theme & high-level concept."""

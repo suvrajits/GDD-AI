@@ -1,7 +1,6 @@
 # app/agents/story_agent.py
 
-from llm_orchestrator import call_openai_chat
-
+from app.llm_client import call_openai_chat
 
 class StoryAgent:
     """Handles world-building, lore, characters, and narrative structure."""

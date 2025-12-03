@@ -9,14 +9,26 @@ import json
 import re
 from typing import Dict, List
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import azure.cognitiveservices.speech as speechsdk
+# NYRA SSML TTS engine
+from app.voice.tts_engine import build_ssml, async_tts
 
 from .config import CONFIG
 from .llm_orchestrator import stream_llm
 from app.routes.rag_routes import router as rag_router
+from app.routes.gdd_routes import router as gdd_router
+from fastapi import WebSocket, WebSocketDisconnect
 
+from pathlib import Path
+
+# quick test route (HTTP) — put into app.main near other routes
+from fastapi.responses import Response
+from app.voice.tts_engine import synthesize_test_phrase
+
+import wave
+import io
 # -----------------------
 # GLOBAL STATE
 # -----------------------
@@ -37,7 +49,7 @@ BYTES_PER_SAMPLE = 2  # 16-bit PCM
 
 MIN_PADDING = 0.02      # 20ms
 MAX_PADDING = 0.08      # 80ms
-
+SSML_TEMPLATE = Path("app/voice/nyra_ssml.xml").read_text(encoding="utf-8")
 # -----------------------
 # FASTAPI APP
 # -----------------------
@@ -45,6 +57,7 @@ app = FastAPI()
 static_path = os.path.join(os.path.dirname(__file__), "static")
 app.include_router(rag_router)
 app.mount("/static", StaticFiles(directory=static_path), name="static")
+app.include_router(gdd_router)
 
 AZURE_SPEECH_KEY = CONFIG["AZURE_SPEECH_KEY"]
 AZURE_SPEECH_REGION = CONFIG["AZURE_SPEECH_REGION"]
@@ -78,14 +91,19 @@ speech_tts_config = speechsdk.SpeechConfig(
     subscription=AZURE_SPEECH_KEY,
     region=AZURE_SPEECH_REGION
 )
-speech_tts_config.speech_synthesis_voice_name = "en-US-JennyNeural"
+
 speech_tts_config.set_speech_synthesis_output_format(
     speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm
 )
 
-def azure_tts_generate_sync(text: str) -> bytes:
-    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_tts_config, audio_config=None)
-    result = synthesizer.speak_text_async(text).get()
+def azure_tts_generate_sync(ssml: str) -> bytes:
+    synthesizer = speechsdk.SpeechSynthesizer(
+        speech_config=speech_tts_config,
+        audio_config=None
+    )
+
+    # IMPORTANT: SSML call (not text)
+    result = synthesizer.speak_ssml_async(ssml).get()
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         return result.audio_data
@@ -93,8 +111,6 @@ def azure_tts_generate_sync(text: str) -> bytes:
     print("❌ Azure TTS error:", result.reason)
     return b""
 
-async def async_tts(text: str) -> bytes:
-    return await asyncio.to_thread(azure_tts_generate_sync, text)
 
 # -----------------------
 # STRUCT HELPERS
@@ -206,7 +222,7 @@ async def tts_playback_worker(session: str):
 # -----------------------
 # TEXT MESSAGE HANDLER
 # -----------------------
-async def handle_text_message(ws: WebSocket, text: str, session: str):
+async def handle_text_message(ws: WebSocket, text: str, session: str, session_state: dict):
     text = text.strip()
     if not text:
         return
@@ -216,7 +232,7 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 
     llm_stop_flags[session] = False
 
-    async for token in stream_llm(text):
+    async for token in stream_llm(text, session_state=session_state):
         if llm_stop_flags[session]:
             break
         await ws.send_json({"type": "llm_stream", "token": token})
@@ -229,6 +245,7 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 async def azure_stream(ws: WebSocket):
     session = str(uuid.uuid4())
     print("WS connected:", session)
+    session_state = {"first_message": True}
 
     llm_stop_flags[session] = False
     user_last_input_was_voice[session] = False
@@ -319,7 +336,11 @@ async def azure_stream(ws: WebSocket):
                     if buf.endswith((".", "!", "?", "...")) or len(buf.split()) >= 50:
                         cleaned = clean_sentence_for_tts(buf)
                         if cleaned:
+                            # build SSML and queue the sentence + TTS generation
+                            ssml = build_ssml(cleaned)
                             tts_sentence_queue[session].append(cleaned)
+
+                            # Generate NYRA audio using async_tts wrapper (which builds SSML internally)
                             task = asyncio.create_task(async_tts(cleaned))
                             tts_gen_tasks[session].append(task)
 
@@ -338,7 +359,9 @@ async def azure_stream(ws: WebSocket):
             if leftover:
                 cleaned = clean_sentence_for_tts(leftover)
                 if cleaned:
+                    ssml = build_ssml(cleaned)
                     tts_sentence_queue[session].append(cleaned)
+                    # Generate NYRA audio (use same async wrapper)
                     task = asyncio.create_task(async_tts(cleaned))
                     tts_gen_tasks[session].append(task)
 
@@ -376,7 +399,7 @@ async def azure_stream(ws: WebSocket):
                 if data:
                     if data.get("type") == "text":
                         asyncio.create_task(
-                            handle_text_message(ws, data["text"], session)
+                            handle_text_message(ws, data["text"], session, session_state)
                         )
                         continue
 
@@ -439,7 +462,33 @@ async def azure_stream(ws: WebSocket):
         print("WS closed:", session)
 
 
+# ⏳ Replace minimal WebSocket with full STT + NYRA TTS streaming
 @app.websocket("/ws/stream")
 async def websocket_stream(ws: WebSocket):
     await ws.accept()
     await azure_stream(ws)
+
+def build_ssml(text: str) -> str:
+    return (
+        SSML_TEMPLATE
+        .replace("{{TEXT_EN}}", text)
+        .replace("{{TEXT_HI}}", "")
+    )
+
+@app.get("/tts/test")
+def tts_test():
+    pcm = synthesize_test_phrase("Hello. This is NYRA. Testing one two three.")
+
+    if not pcm:
+        return {"ok": False, "error": "TTS failed on server"}
+
+    # Wrap raw PCM into a proper WAV file
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)   # 16-bit
+        wf.setframerate(16000)
+        wf.writeframes(pcm)
+
+    wav_bytes = buf.getvalue()
+    return Response(content=wav_bytes, media_type="audio/wav")
