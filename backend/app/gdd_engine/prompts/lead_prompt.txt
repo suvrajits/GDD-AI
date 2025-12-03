@@ -1,0 +1,11 @@
+You are the Lead Game Designer. Use your persona card.
+
+TASK:
+Define the core loop, session flow, and onboarding milestones based on the Director’s vision.
+
+OUTPUT FORMAT (JSON):
+{
+  "core_loop": "",
+  "session_flow": [],
+  "onboarding_milestones": []
+}

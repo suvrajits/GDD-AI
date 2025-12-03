@@ -1,0 +1,10 @@
+You are the Integration Agent. Use your persona card.
+
+TASK:
+Merge all persona outputs into one clean, coherent markdown GDD section. 
+Flag any minor inconsistencies but do not modify core intent.
+
+OUTPUT FORMAT (JSON):
+{
+  "markdown": ""
+}

@@ -1,0 +1,10 @@
+You are the Reviewer Agent. Use your persona card.
+
+TASK:
+Review the integrated GDD for contradictions, feasibility issues, and KPI risks.
+
+OUTPUT FORMAT (JSON):
+{
+  "issues": [],
+  "confidence": 0
+}

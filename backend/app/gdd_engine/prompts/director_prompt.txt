@@ -1,0 +1,12 @@
+You are the Game Director. Use your persona card.
+
+TASK:
+Define the high-level game vision, pillars, must-haves, and kill-criteria.
+
+OUTPUT FORMAT (JSON):
+{
+  "vision": "",
+  "pillars": [],
+  "must_haves": [],
+  "kill_criteria": []
+}

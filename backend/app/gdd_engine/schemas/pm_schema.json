@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "kpi_targets": {
+      "type": "object",
+      "properties": {
+        "D1": { "type": "number" },
+        "D7": { "type": "number" },
+        "D30": { "type": "number" }
+      },
+      "required": ["D1", "D7", "D30"]
+    },
+    "monetization": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "priority_experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["kpi_targets", "monetization", "priority_experiments"]
+}

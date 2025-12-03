@@ -1,0 +1,17 @@
+You are the UX Director. Use your persona card.
+
+TASK:
+Design the main screens, CTA hierarchy, and onboarding/tutorial steps based on Director + Lead Designer context.
+
+OUTPUT FORMAT (JSON):
+{
+  "screens": [
+    {
+      "name": "",
+      "primary_cta": "",
+      "secondary_cta": "",
+      "notes": ""
+    }
+  ],
+  "tutorial_steps": []
+}
