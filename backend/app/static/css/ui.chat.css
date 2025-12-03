@@ -1,0 +1,42 @@
+/* ui.chat.css */
+
+.msg {
+    max-width: 70%;
+    margin: 10px 0;
+    padding: 12px 16px;
+    border-radius: 12px;
+    line-height: 1.4;
+}
+
+.msg.user {
+    background: #d0e8ff;
+    margin-left: auto;
+}
+
+.msg.bot {
+    background: #fff;
+    border: 1px solid #ddd;
+    margin-right: auto;
+}
+
+.agent-card {
+    background: #fff;
+    padding: 15px;
+    border-radius: 10px;
+    border: 1px solid #ddd;
+    margin-bottom: 12px;
+}
+
+.btn-pin {
+    margin-top: 10px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    background: #3949ab;
+    color: white;
+    cursor: pointer;
+}
+
+.btn-pin:hover {
+    background: #1e2f77;
+}

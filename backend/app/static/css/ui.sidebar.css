@@ -1,0 +1,29 @@
+/* ui.sidebar.css */
+
+#sidebar { 
+    width: 240px; 
+    padding: 18px; 
+    background: #111; 
+    color: #fff; 
+}
+
+.side-btn { 
+    display: block; 
+    width: 100%; 
+    margin: 10px 0; 
+    text-align: left; 
+    padding: 12px; 
+    border-radius: 8px; 
+    background: #222; 
+    color: #fff; 
+    border: none; 
+    cursor: pointer;
+}
+
+.side-btn:hover { 
+    background: #2b2b2b; 
+}
+
+.side-btn.active {
+    background: #3949ab;
+}

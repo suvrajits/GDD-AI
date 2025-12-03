@@ -3,7 +3,12 @@
 <head>
     <meta charset="UTF-8" />
     <title>Game Genie AI — Voice + Chat</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    <!-- add new UI css after the base -->
+    <link rel="stylesheet" href="css/ui.layout.css">
+    <link rel="stylesheet" href="css/ui.sidebar.css">
+    <link rel="stylesheet" href="css/ui.chat.css">
 </head>
 
 <body>
@@ -81,7 +86,18 @@
 </div>
 
 
-<script src="/static/app.js"></script>
+<script src="/static/js/app.js"></script>
+<!-- new module scripts placed AFTER app.js (so app.js remains untouched) -->
+<script src="js/utils/dom.js"></script>
+<script src="js/utils/storage.js"></script>
+
+<script src="js/services/ragMock.js"></script>
+<script src="js/services/voiceMock.js"></script>
+
+<script src="js/ui/sidebar.js"></script>
+<script src="js/ui/agentCards.js"></script>
+<script src="js/ui/chatView.js"></script>
+<script src="js/ui/uploadPane.js"></script>
 </body>
 
 </html>
