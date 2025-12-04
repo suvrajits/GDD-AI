@@ -324,3 +324,13 @@ body {
 .kb-remove:hover {
     color: #ff0000;
 }
+
+/* Tip bubble shown under AI messages */
+.ai-tip {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+    margin-left: 6px;
+    user-select: none;
+    font-style: italic;
+}

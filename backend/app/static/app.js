@@ -163,6 +163,15 @@ function appendMessage(text, role, opts = {}) {
         div.textContent = text;
     }
 
+    // Add GDD hint only when wizard is inactive
+    if (role === "ai" && !gddWizardActive) {
+        const tip = document.createElement("div");
+        tip.className = "ai-tip";
+        tip.textContent = "💡 Tip: Say or type “Activate GDD Wizard” to begin building a full Game Design Document.";
+        div.appendChild(tip);
+    }
+
+
     document.getElementById("messages").appendChild(div);
     messages.scrollTop = messages.scrollHeight;
     return div;
@@ -235,6 +244,21 @@ function connectWS() {
 
         if (d.type === "final") {
             const txt = d.text?.trim();
+            if (!txt) {
+                finalizeAI();
+                return;
+            }
+
+            // --------------------------------------------
+            // 🔥 Voice-triggered GDD Wizard activation
+            // --------------------------------------------
+            if (!gddWizardActive && txt.toLowerCase().includes("activate gdd wizard")) {
+                appendMessage(txt, "user");   // show transcript
+                startGDDWizard();             // launch wizard
+                currentSessionIsVoice = false;
+                finalizeAI();
+                return;
+            }
 
             // --------------------------------------------
             // 🔥 SHIELD #3 — Prevent duplicate text in text-mode
@@ -246,14 +270,15 @@ function connectWS() {
             }
 
             // --------------------------------------------
-            // Voice mode → show transcript
+            // Voice mode → show transcript normally
             // --------------------------------------------
-            if (txt) appendMessage(txt, "user");
+            appendMessage(txt, "user");
 
             currentSessionIsVoice = false;
             finalizeAI();
             return;
         }
+
 
 
 
@@ -402,7 +427,13 @@ async function sendText() {
     }
 
     // 2) Start wizard
-    const triggers = ["create gdd", "start gdd", "gdd wizard", "design document"];
+    const triggers = [
+    "create gdd",
+    "start gdd",
+    "gdd wizard",
+    "design document",
+    "activate gdd wizard"
+    ];
     if (triggers.some(t => lower.includes(t))) {
         appendMessage(msg, "user");
         startGDDWizard();
