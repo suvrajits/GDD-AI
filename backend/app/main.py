@@ -237,8 +237,9 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 
         await ws.send_json({
             "type": "wizard_question",
-            "text": QUESTIONS[0]
+            "text": f"{QUESTIONS[0]}\n(1 / {len(QUESTIONS)})"
         })
+
 
         return  # IMPORTANT: do not run LLM in wizard mode
 
@@ -262,8 +263,9 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 
         await ws.send_json({
             "type": "wizard_question",
-            "text": QUESTIONS[stage]
+            "text": f"{QUESTIONS[stage]}\n({stage+1} / {len(QUESTIONS)})"
         })
+
 
         return  # do not run LLM
 
@@ -403,6 +405,7 @@ async def azure_stream(ws: WebSocket):
             "start wizard",
         ]
 
+        # WIZARD ACTIVATION (VOICE) — UNIFIED WITH TEXT MODE
         if any(p in normalized for p in activation_phrases):
             print("🎯 WIZARD ACTIVATED:", normalized)
 
@@ -411,22 +414,34 @@ async def azure_stream(ws: WebSocket):
             gdd_wizard_active[session] = True
             gdd_wizard_stage[session] = 0
 
+            # Show the same activation message as TEXT mode
             asyncio.run_coroutine_threadsafe(
                 ws.send_json({
                     "type": "wizard_notice",
-                    "text": "🎮 **GDD Wizard Activated!** Say 'Go Next' anytime."
+                    "text": "🎮 **GDD Wizard Activated!**\nSay **Go Next** anytime to proceed."
                 }),
                 loop
             )
 
+            # Add question numbering exactly the same as text mode
+            first_question = f"{QUESTIONS[0]}\n(1 / {len(QUESTIONS)})"
+
             asyncio.run_coroutine_threadsafe(
                 ws.send_json({
                     "type": "wizard_question",
-                    "text": QUESTIONS[0]
+                    "text": first_question
                 }),
                 loop
             )
+
+            # Also show the STT transcript of what the user said
+            asyncio.run_coroutine_threadsafe(
+                ws.send_json({"type": "final", "text": raw_text}),
+                loop
+            )
+
             return
+
 
         # ---------------------------------------------------------
         # Wizard Go Next
@@ -599,3 +614,4 @@ async def azure_stream(ws: WebSocket):
 async def websocket_stream(ws: WebSocket):
     await ws.accept()
     await azure_stream(ws)
+
