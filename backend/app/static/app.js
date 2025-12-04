@@ -1,4 +1,3 @@
-// static/app.js
 /* --------------------------------------------------
    State
 -------------------------------------------------- */
@@ -15,27 +14,22 @@ let currentAiDiv = null;
 let currentSessionIsVoice = false;   // voice-mode flag
 
 /* --------------------------------------------------
-   NEW — Guided GDD Mode (Server-driven)
+   Guided GDD Mode (Server-driven)
 -------------------------------------------------- */
 let gddWizardActive = false;
 let gddSessionId = null;
 let currentGDDMarkdown = "";
 
-/* REMOVE old local arrays:
-   let gddMode = false;
-   let gddQuestions = [...]
-   let gddAnswers = {};
-   let gddIndex = 0;
-*/
-
 /* --------------------------------------------------
-   NEW — GDD Wizard API Calls
+   Wizard Utility
 -------------------------------------------------- */
-
 function sendBot(text) {
     appendMessage(text, "ai");
 }
 
+/* --------------------------------------------------
+   Wizard API — start / answer / next / finish
+-------------------------------------------------- */
 async function startGDDWizard() {
     gddWizardActive = true;
 
@@ -44,14 +38,14 @@ async function startGDDWizard() {
 
     gddSessionId = data.session_id;
 
-    sendBot("🎮 **GDD Wizard Activated!**");
+    sendBot("🎮 **GDD Wizard Activated!**\nSay **Go Next** anytime to proceed.");
     sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
 }
 
 async function answerGDD(userText) {
     const res = await fetch("/gdd/answer", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             session_id: gddSessionId,
             answer: userText
@@ -61,7 +55,25 @@ async function answerGDD(userText) {
     const data = await res.json();
 
     if (data.status === "done") {
-        sendBot("🎉 All questions collected! Type **finish gdd** to generate the full GDD.");
+        sendBot("🎉 All questions collected! Say or type **finish gdd** to generate the document.");
+        return;
+    }
+
+    sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
+}
+
+/* ⭐ PATCH: new /gdd/next request */
+async function nextGDD() {
+    const res = await fetch("/gdd/next", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: gddSessionId })
+    });
+
+    const data = await res.json();
+
+    if (data.status === "done") {
+        sendBot("🎉 All questions answered! Say or type **finish gdd** to generate the full GDD.");
         return;
     }
 
@@ -73,7 +85,7 @@ async function finishGDD() {
 
     const res = await fetch("/gdd/finish", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: gddSessionId })
     });
 
@@ -85,14 +97,12 @@ async function finishGDD() {
     }
 
     currentGDDMarkdown = data.markdown;
-
     sendBot("📘 **Your GDD is ready!**");
     sendBot(data.markdown);
 
     gddWizardActive = false;
     gddSessionId = null;
 }
-
 
 /* --------------------------------------------------
    stopAllPlayback()
@@ -115,7 +125,7 @@ function stopAllPlayback() {
 }
 
 /* --------------------------------------------------
-   playPcmChunk()
+   PCM Playback
 -------------------------------------------------- */
 function playPcmChunk(buffer) {
     if (!ttsAudioContext) {
@@ -140,15 +150,13 @@ function playPcmChunk(buffer) {
     const src = ttsAudioContext.createBufferSource();
     src.buffer = audioBuffer;
     src.connect(ttsAudioContext.destination);
-    try {
-        src.start();
-    } catch (e) {
-        console.warn("Error starting audio source:", e);
-    }
+
+    try { src.start(); }
+    catch (e) { console.warn("Error starting audio source:", e); }
 }
 
 /* --------------------------------------------------
-   UI helpers
+   UI Helpers
 -------------------------------------------------- */
 function appendMessage(text, role, opts = {}) {
     const div = document.createElement("div");
@@ -159,23 +167,44 @@ function appendMessage(text, role, opts = {}) {
         wrap.className = "content";
         wrap.textContent = text;
         div.appendChild(wrap);
-    } else {
-        div.textContent = text;
-    }
 
-    // Add GDD hint only when wizard is inactive
-    if (role === "ai" && !gddWizardActive) {
+        // ⭐ Tooltip under AI messages
         const tip = document.createElement("div");
         tip.className = "ai-tip";
-        tip.textContent = "💡 Tip: Say or type “Activate GDD Wizard” to begin building a full Game Design Document.";
-        div.appendChild(tip);
+
+        // If this is a backend-driven wizard question (not the activation notice or final GDD),
+        // do not show the tooltip under the AI message.
+        if (gddWizardActive && text && !text.startsWith("🎮") && !text.startsWith("📘")) {
+            const container = document.getElementById("messages");
+            container.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+            return div;
+        }
+
+        if (!gddWizardActive) {
+            tip.textContent = "💡 Tip: Say “Activate GDD Wizard” to start creating a full Game Design Document.";
+        } else {
+            tip.textContent = "💡 Tip: Say “Go Next” when you're ready to continue.";
+        }
+
+        const container = document.getElementById("messages");
+        container.appendChild(div);
+        container.appendChild(tip);
+
+        messages.scrollTop = messages.scrollHeight;
+        return div;
     }
 
-
+    // -------------------------------
+    // USER message path
+    // -------------------------------
+    div.textContent = text;
     document.getElementById("messages").appendChild(div);
     messages.scrollTop = messages.scrollHeight;
     return div;
 }
+
+
 
 function appendToAI(text) {
     if (!currentAiDiv) {
@@ -193,18 +222,14 @@ function finalizeAI() {
 }
 
 /* --------------------------------------------------
-   WebSocket connect
+   WebSocket Logic
 -------------------------------------------------- */
 function connectWS() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         return wsReady || Promise.resolve();
     }
 
-    ws = new WebSocket(
-        (location.protocol === "https:" ? "wss://" : "ws://") +
-        location.host +
-        "/ws/stream"
-    );
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/stream");
     ws.binaryType = "arraybuffer";
 
     wsReady = new Promise((resolve, reject) => {
@@ -234,100 +259,101 @@ function connectWS() {
     };
 
     ws.onmessage = async (msg) => {
-
-        /* ----------- PCM Audio Frames ------------- */
         if (msg.data instanceof ArrayBuffer) {
             playPcmChunk(msg.data);
             return;
         }
 
-        /* ----------- JSON Packets ------------- */
         let d = null;
         try { d = JSON.parse(msg.data); }
         catch (err) {
             console.error("JSON parse error", err, msg.data);
             return;
         }
+        /* --------------------------------------------------
+        WIZARD EVENTS (from backend)
+        -------------------------------------------------- */
+        if (d.type === "wizard_notice") {
+            sendBot(d.text);
+            return;
+        }
 
-        /* ============================================================
-           🔥 FINAL — A transcript arrives here (voice-only)
-        ============================================================ */
+        if (d.type === "wizard_question") {
+            sendBot(d.text);
+            return;
+        }
+
+        if (d.type === "wizard_answer") {
+            appendMessage(d.text, "user");
+            return;
+        }
+
+
+        /* --------------------------------------------------
+           FINAL TRANSCRIPT
+        -------------------------------------------------- */
         if (d.type === "final") {
             const txt = d.text?.trim();
-            if (!txt) {
-                finalizeAI();
-                return;
+            if (!txt) { finalizeAI(); return; }
+            // Ignore final messages if wizard events are supposed to handle them
+            if (gddWizardActive) {
+                // Only accept FINAL if it is the generated GDD (finish command)
+                const finalTxt = txt || "";
+                if (finalTxt.startsWith("📘")) {
+                    sendBot(finalTxt);
+                    return;
+                }
+                return; // ignore all other wizard finals
             }
+
 
             const lower = txt.toLowerCase();
 
-            // ------------------------------------------------------------
-            // 🔥 Voice-trigger: "activate gdd wizard"
-            // ------------------------------------------------------------
+            // ⭐ PATCH — Voice trigger: Activate GDD Wizard
             if (!gddWizardActive && lower.includes("activate gdd wizard")) {
                 appendMessage(txt, "user");
-                startGDDWizard();
+                // Do NOT call startGDDWizard() here — backend will emit wizard_notice + wizard_question
                 currentSessionIsVoice = false;
                 finalizeAI();
                 return;
             }
 
-            // ------------------------------------------------------------
-            // 🔥 Voice answer inside GDD Wizard
-            // ------------------------------------------------------------
-            if (gddWizardActive) {
-                appendMessage(txt, "user");   // show transcript
-                await answerGDD(txt);         // call backend
-                currentSessionIsVoice = false;
-                finalizeAI();
-                return;
-            }
-
-            // ------------------------------------------------------------
-            // 🔥 Shield: prevent duplicates in text mode
-            // ------------------------------------------------------------
+            // Shield duplicate text in text mode
             if (!micActive && !currentSessionIsVoice) {
                 finalizeAI();
                 return;
             }
 
-            // ------------------------------------------------------------
-            // Normal voice-based user message (non-wizard)
-            // ------------------------------------------------------------
+            // Normal voice chat
             appendMessage(txt, "user");
             currentSessionIsVoice = false;
             finalizeAI();
             return;
         }
 
-        /* ============================================================
-           🔥 BLOCK ALL STREAMING DURING WIZARD
-        ============================================================ */
+        /* --------------------------------------------------
+           AI Streaming
+        -------------------------------------------------- */
         if (d.type === "llm_stream") {
-            if (gddWizardActive) return;   // wizard mode suppresses AI stream
+            if (gddWizardActive) return; // block during wizard
             if (!currentSessionIsVoice && d.token) appendToAI(d.token);
             return;
         }
 
         if (d.type === "llm_done") {
-            if (gddWizardActive) return;   // wizard: suppress finalization text
+            if (gddWizardActive) return;
             if (!currentSessionIsVoice) finalizeAI();
             return;
         }
 
-        /* ============================================================
-           VOICE EVENTS
-        ============================================================ */
-
+        /* --------------------------------------------------
+           Sentence Start
+        -------------------------------------------------- */
         if (d.type === "sentence_start") {
-            // block AI narration in wizard
             if (gddWizardActive) return;
-
             const clean = (d.text || "").trim();
             if (!clean) return;
-
             currentSessionIsVoice = true;
-
             if (!currentAiDiv) {
                 currentAiDiv = appendMessage("", "ai", { streaming: true });
             }
@@ -357,13 +383,13 @@ function connectWS() {
     return wsReady;
 }
 
-
 /* --------------------------------------------------
-   Microphone streaming (untouched)
+   Microphone (unchanged)
 -------------------------------------------------- */
 async function startMicStreaming() {
     if (micActive) return;
     micActive = true;
+
     document.getElementById("btnStartMic").classList.add("active");
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -395,18 +421,11 @@ function stopMic(closeWs = true) {
 }
 
 document.getElementById("btnStartMic").onclick = async () => {
-    try {
-        await connectWS();
-    } catch (e) {
-        appendMessage("[offline] WebSocket not connected", "ai");
-        return;
-    }
+    try { await connectWS(); }
+    catch (e) { appendMessage("[offline] WebSocket not connected", "ai"); return; }
 
-    if (!micActive) {
-        startMicStreaming();
-    } else {
-        stopMic(false);
-    }
+    if (!micActive) startMicStreaming();
+    else stopMic(false);
 };
 
 document.getElementById("btnStopMic").onclick = async () => {
@@ -423,89 +442,61 @@ document.getElementById("btnStopMic").onclick = async () => {
 };
 
 /* --------------------------------------------------
-   SEND TEXT — UPDATED GDD LOGIC
+   SEND TEXT — Includes Wizard Patches
 -------------------------------------------------- */
 async function sendText() {
     const msg = textInput.value.trim();
     if (!msg) return;
     textInput.value = "";
 
-    // 🔥 Force text-mode state reset (fixes duplicate messages)
-
-    currentSessionIsVoice = false;
-
-    // 🔥 PATCH C — properly stop mic if it was active
-    if (micActive) stopMic(false);
-
-    micActive = false;  // (safe now after stopMic)
-
-    /* Disable mic UI state */
-    const micBtn = document.getElementById("btnStartMic");
-    const stopMicBtn = document.getElementById("btnStopMic");
-
-    micBtn.classList.remove("active");
-    micBtn.disabled = false;
-    stopMicBtn.disabled = true;
-
-    try { workletNode?.disconnect(); } catch {}
-    try { audioContext?.close(); } catch {}
-    workletNode = null;
-    audioContext = null;
-
-
     const lower = msg.toLowerCase();
 
-    // 1) Already inside guided wizard
-    // 🔥 Voice-mode GDD Wizard answer (FULL STOP FIX)
-    if (gddWizardActive) {
+    // In wizard → this is an answer
+    if (gddWizardActive && !lower.includes("go next")) {
         appendMessage(msg, "user");
         await answerGDD(msg);
-        currentSessionIsVoice = false;
-        finalizeAI();
         return;
     }
 
+    // ⭐ PATCH — Text trigger: Go Next
+    if (gddWizardActive && lower.includes("go next")) {
+        appendMessage(msg, "user");
+        await nextGDD();
+        return;
+    }
 
-
-    // 2) Start wizard
-    const triggers = [
-    "create gdd",
-    "start gdd",
-    "gdd wizard",
-    "design document",
-    "activate gdd wizard"
-    ];
+    // Start wizard (text)
+    const triggers = ["create gdd", "start gdd", "gdd wizard", "design document", "activate gdd wizard"];
     if (triggers.some(t => lower.includes(t))) {
         appendMessage(msg, "user");
         startGDDWizard();
         return;
     }
 
-    // 3) Finish wizard (generate output)
+    // Finish wizard
     if (lower === "finish gdd" || lower === "generate gdd") {
         appendMessage(msg, "user");
         await finishGDD();
         return;
     }
 
-    // 4) Normal chat mode
+    // Normal chat
     appendMessage(msg, "user");
 
     try {
         await connectWS();
         currentSessionIsVoice = false;
+        if (micActive) stopMic(false);   // ⭐ PATCH — ensure clean mode
         stopAllPlayback();
         finalizeAI();
-
         ws.send(JSON.stringify({ type: "text", text: msg }));
     } catch (e) {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
 }
 
-
 /* --------------------------------------------------
-   Buttons & Keybinds (unchanged)
+   Buttons / Keybinds
 -------------------------------------------------- */
 const textInput = document.getElementById("textInput");
 const btnSend = document.getElementById("btnSend");
@@ -519,7 +510,7 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 /* --------------------------------------------------
-   Sidebar + Workspace Toggles (unchanged)
+   Sidebar + Workspace Toggles
 -------------------------------------------------- */
 const sidebar = document.getElementById("sidebar");
 const workspace = document.getElementById("workspace");
@@ -535,14 +526,13 @@ document.getElementById("toggleRight").onclick = () => {
 };
 
 /* --------------------------------------------------
-   RAG Upload + Embedding (untouched)
+   RAG Upload (unchanged)
 -------------------------------------------------- */
 const uploadBtn = document.getElementById("btnUploadEmbed");
 const fileInput = document.getElementById("ragFileInput");
 const statusBox = document.getElementById("uploadStatus");
 const kbList = document.getElementById("kbList");
 
-// Chat upload
 const chatUploadBtn = document.getElementById("btnUploadChat");
 const chatFileInput = document.getElementById("ragFileInputChat");
 
@@ -560,16 +550,12 @@ async function triggerUpload(files) {
     for (const f of files) form.append("files", f);
 
     let res = await fetch("/rag/upload", { method: "POST", body: form });
-    if (!res.ok) {
-        statusBox.textContent = "Upload failed ❌";
-        return;
-    }
+    if (!res.ok) { statusBox.textContent = "Upload failed ❌"; return; }
 
     statusBox.textContent = "Embedding…";
 
     let res2 = await fetch("/rag/ingest", { method: "POST" });
-    let out2 = await res2.json();
-    console.log("INGEST:", out2);
+    await res2.json();
 
     statusBox.textContent = "Embedded successfully ✔️";
 
@@ -612,10 +598,7 @@ async function downloadDocx(markdown) {
         body: JSON.stringify({ markdown })
     });
 
-    if (!res.ok) {
-        alert("DOCX export failed");
-        return;
-    }
+    if (!res.ok) { alert("DOCX export failed"); return; }
 
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
