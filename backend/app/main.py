@@ -16,6 +16,7 @@ import azure.cognitiveservices.speech as speechsdk
 from .config import CONFIG
 from .llm_orchestrator import stream_llm
 from app.routes.rag_routes import router as rag_router
+from .gdd_api import router as gdd_router
 
 # -----------------------
 # GLOBAL STATE
@@ -45,6 +46,9 @@ app = FastAPI()
 static_path = os.path.join(os.path.dirname(__file__), "static")
 app.include_router(rag_router)
 app.mount("/static", StaticFiles(directory=static_path), name="static")
+# GDD API routes
+app.include_router(gdd_router, prefix="/gdd", tags=["GDD"])
+
 
 AZURE_SPEECH_KEY = CONFIG["AZURE_SPEECH_KEY"]
 AZURE_SPEECH_REGION = CONFIG["AZURE_SPEECH_REGION"]

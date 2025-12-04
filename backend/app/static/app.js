@@ -15,12 +15,91 @@ let currentAiDiv = null;
 let currentSessionIsVoice = false;   // voice-mode flag
 
 /* --------------------------------------------------
-   stopAllPlayback() — stops audio immediately but ensures audio context can be recreated
+   NEW — Guided GDD Mode (Server-driven)
+-------------------------------------------------- */
+let gddWizardActive = false;
+let gddSessionId = null;
+let currentGDDMarkdown = "";
+
+/* REMOVE old local arrays:
+   let gddMode = false;
+   let gddQuestions = [...]
+   let gddAnswers = {};
+   let gddIndex = 0;
+*/
+
+/* --------------------------------------------------
+   NEW — GDD Wizard API Calls
+-------------------------------------------------- */
+
+function sendBot(text) {
+    appendMessage(text, "ai");
+}
+
+async function startGDDWizard() {
+    gddWizardActive = true;
+
+    const res = await fetch("/gdd/start", { method: "POST" });
+    const data = await res.json();
+
+    gddSessionId = data.session_id;
+
+    sendBot("🎮 **GDD Wizard Activated!**");
+    sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
+}
+
+async function answerGDD(userText) {
+    const res = await fetch("/gdd/answer", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            session_id: gddSessionId,
+            answer: userText
+        })
+    });
+
+    const data = await res.json();
+
+    if (data.status === "done") {
+        sendBot("🎉 All questions collected! Type **finish gdd** to generate the full GDD.");
+        return;
+    }
+
+    sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
+}
+
+async function finishGDD() {
+    sendBot("🧠 Generating your Game Design Document…");
+
+    const res = await fetch("/gdd/finish", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ session_id: gddSessionId })
+    });
+
+    const data = await res.json();
+
+    if (data.status !== "ok") {
+        sendBot("❌ Error generating GDD.");
+        return;
+    }
+
+    currentGDDMarkdown = data.markdown;
+
+    sendBot("📘 **Your GDD is ready!**");
+    sendBot(data.markdown);
+
+    gddWizardActive = false;
+    gddSessionId = null;
+}
+
+
+/* --------------------------------------------------
+   stopAllPlayback()
 -------------------------------------------------- */
 function stopAllPlayback() {
     try {
         if (ttsAudioContext && typeof ttsAudioContext.close === "function") {
-            // close stops playback; we set to null so next play recreates new context
             ttsAudioContext.close();
         }
     } catch (e) {
@@ -36,7 +115,7 @@ function stopAllPlayback() {
 }
 
 /* --------------------------------------------------
-   playPcmChunk() — raw PCM16 playback with recreated AudioContext if needed
+   playPcmChunk()
 -------------------------------------------------- */
 function playPcmChunk(buffer) {
     if (!ttsAudioContext) {
@@ -155,12 +234,29 @@ function connectWS() {
         }
 
         if (d.type === "final") {
-            if (d.text && d.text.trim()) {
-                appendMessage(d.text, "user");
+            const txt = d.text?.trim();
+
+            // --------------------------------------------
+            // 🔥 SHIELD #3 — Prevent duplicate text in text-mode
+            // --------------------------------------------
+            if (!micActive && !currentSessionIsVoice) {
+                // text mode → ignore transcript completely
+                finalizeAI();
+                return;
             }
+
+            // --------------------------------------------
+            // Voice mode → show transcript
+            // --------------------------------------------
+            if (txt) appendMessage(txt, "user");
+
+            currentSessionIsVoice = false;
             finalizeAI();
             return;
         }
+
+
+
 
         if (d.type === "llm_stream") {
             if (!currentSessionIsVoice && d.token) {
@@ -200,7 +296,6 @@ function connectWS() {
         }
 
         if (d.type === "partial") {
-            // ignore partial transcripts in UI to avoid noise
             return;
         }
     };
@@ -209,18 +304,15 @@ function connectWS() {
 }
 
 /* --------------------------------------------------
-   Microphone streaming
+   Microphone streaming (untouched)
 -------------------------------------------------- */
 async function startMicStreaming() {
     if (micActive) return;
     micActive = true;
-
-    // 🔥 NEW — visual state ON
     document.getElementById("btnStartMic").classList.add("active");
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioContext = new AudioContext({ sampleRate: 16000 });
-
 
     await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
 
@@ -236,8 +328,6 @@ async function startMicStreaming() {
 
 function stopMic(closeWs = true) {
     micActive = false;
-
-    // 🔥 NEW — visual state OFF
     document.getElementById("btnStartMic").classList.remove("active");
 
     try { workletNode?.disconnect(); } catch {}
@@ -249,9 +339,6 @@ function stopMic(closeWs = true) {
     if (closeWs && ws?.readyState === WebSocket.OPEN) ws.close();
 }
 
-/* --------------------------------------------------
-   UI Buttons & Text send
--------------------------------------------------- */
 document.getElementById("btnStartMic").onclick = async () => {
     try {
         await connectWS();
@@ -261,12 +348,11 @@ document.getElementById("btnStartMic").onclick = async () => {
     }
 
     if (!micActive) {
-        startMicStreaming();   // mic turns ON
+        startMicStreaming();
     } else {
-        stopMic(false);        // mic turns OFF, websocket remains open
+        stopMic(false);
     }
 };
-
 
 document.getElementById("btnStopMic").onclick = async () => {
     try {
@@ -278,13 +364,79 @@ document.getElementById("btnStopMic").onclick = async () => {
         appendMessage("[offline] WebSocket not connected", "ai");
     }
 
-    // stop playback locally too
     stopAllPlayback();
 };
 
+/* --------------------------------------------------
+   SEND TEXT — UPDATED GDD LOGIC
+-------------------------------------------------- */
+async function sendText() {
+    const msg = textInput.value.trim();
+    if (!msg) return;
+    textInput.value = "";
+
+    // 🔥 Force text-mode state reset (fixes duplicate messages)
+    currentSessionIsVoice = false;
+    micActive = false;
+
+    // 🔥 Disable mic button until user clicks again
+    const micBtn = document.getElementById("btnStartMic");
+    const stopMicBtn = document.getElementById("btnStopMic");
+
+    micBtn.classList.remove("active");  // remove glow
+    micBtn.disabled = false;            // re-enable press
+    stopMicBtn.disabled = true;         // can't stop something not running
+
+    try { workletNode?.disconnect(); } catch {}
+    try { audioContext?.close(); } catch {}
+    workletNode = null;
+    audioContext = null;
+
+    const lower = msg.toLowerCase();
+
+    // 1) Already inside guided wizard
+    if (gddWizardActive) {
+        appendMessage(msg, "user");
+        await answerGDD(msg);
+        return;
+    }
+
+    // 2) Start wizard
+    const triggers = ["create gdd", "start gdd", "gdd wizard", "design document"];
+    if (triggers.some(t => lower.includes(t))) {
+        appendMessage(msg, "user");
+        startGDDWizard();
+        return;
+    }
+
+    // 3) Finish wizard (generate output)
+    if (lower === "finish gdd" || lower === "generate gdd") {
+        appendMessage(msg, "user");
+        await finishGDD();
+        return;
+    }
+
+    // 4) Normal chat mode
+    appendMessage(msg, "user");
+
+    try {
+        await connectWS();
+        currentSessionIsVoice = false;
+        stopAllPlayback();
+        finalizeAI();
+
+        ws.send(JSON.stringify({ type: "text", text: msg }));
+    } catch (e) {
+        appendMessage("[offline] WebSocket not connected", "ai");
+    }
+}
+
+
+/* --------------------------------------------------
+   Buttons & Keybinds (unchanged)
+-------------------------------------------------- */
 const textInput = document.getElementById("textInput");
 const btnSend = document.getElementById("btnSend");
-
 btnSend.onclick = () => sendText();
 
 textInput.addEventListener("keydown", (e) => {
@@ -294,71 +446,38 @@ textInput.addEventListener("keydown", (e) => {
     }
 });
 
-async function sendText() {
-    const msg = textInput.value.trim();
-    if (!msg) return;
-    textInput.value = "";
-
-    try {
-        await connectWS();
-    } catch (e) {
-        appendMessage("[offline] WebSocket not connected", "ai");
-        return;
-    }
-
-    // ensure text-mode (no voice)
-    currentSessionIsVoice = false;
-    stopAllPlayback();
-    finalizeAI();
-
-    try {
-        ws.send(JSON.stringify({ type: "text", text: msg }));
-    } catch (e) {
-        appendMessage("[offline] WebSocket not connected", "ai");
-    }
-}
-
 /* --------------------------------------------------
-   Sidebar + Workspace Slide Toggles
+   Sidebar + Workspace Toggles (unchanged)
 -------------------------------------------------- */
-
 const sidebar = document.getElementById("sidebar");
 const workspace = document.getElementById("workspace");
 
-const toggleLeft = document.getElementById("toggleLeft");
-const toggleRight = document.getElementById("toggleRight");
-
-toggleLeft.onclick = () => {
+document.getElementById("toggleLeft").onclick = () => {
     sidebar.classList.toggle("collapsed");
     toggleLeft.textContent = sidebar.classList.contains("collapsed") ? "➡️" : "⬅️";
 };
 
-toggleRight.onclick = () => {
+document.getElementById("toggleRight").onclick = () => {
     workspace.classList.toggle("collapsed");
     toggleRight.textContent = workspace.classList.contains("collapsed") ? "⬅️" : "➡️";
 };
 
 /* --------------------------------------------------
-   RAG Upload (Workspace) — Single-button Upload+Embed
--------------------------------------------------- */
-/* --------------------------------------------------
-   RAG Upload (Workspace) — Single-button Upload+Embed
+   RAG Upload + Embedding (untouched)
 -------------------------------------------------- */
 const uploadBtn = document.getElementById("btnUploadEmbed");
 const fileInput = document.getElementById("ragFileInput");
 const statusBox = document.getElementById("uploadStatus");
 const kbList = document.getElementById("kbList");
 
-// Chat-box upload button
+// Chat upload
 const chatUploadBtn = document.getElementById("btnUploadChat");
 const chatFileInput = document.getElementById("ragFileInputChat");
 
 chatUploadBtn.onclick = () => chatFileInput.click();
 chatFileInput.onchange = () => triggerUpload(chatFileInput.files);
 fileInput.onchange = () => triggerUpload(fileInput.files);
-
 uploadBtn.onclick = () => triggerUpload(fileInput.files);
-
 
 async function triggerUpload(files) {
     if (!files || files.length === 0) return;
@@ -368,18 +487,14 @@ async function triggerUpload(files) {
     const form = new FormData();
     for (const f of files) form.append("files", f);
 
-    // 1) Upload
-    let res = await fetch("/rag/upload", { method: "POST", body: form });   
+    let res = await fetch("/rag/upload", { method: "POST", body: form });
     if (!res.ok) {
         statusBox.textContent = "Upload failed ❌";
         return;
     }
-    let out = await res.json();
-    console.log("UPLOAD:", out);
 
     statusBox.textContent = "Embedding…";
 
-    // 2) Ingest
     let res2 = await fetch("/rag/ingest", { method: "POST" });
     let out2 = await res2.json();
     console.log("INGEST:", out2);
@@ -398,11 +513,9 @@ async function refreshKBList() {
         let div = document.createElement("div");
         div.className = "kb-item";
 
-        // File name label
         let label = document.createElement("span");
         label.textContent = f;
 
-        // Remove button (❌)
         let rm = document.createElement("span");
         rm.textContent = "❌";
         rm.className = "kb-remove";
@@ -417,8 +530,35 @@ async function refreshKBList() {
     });
 }
 
+/* --------------------------------------------------
+   DOCX Export
+-------------------------------------------------- */
+async function downloadDocx(markdown) {
+    const res = await fetch("/gdd/export-docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markdown })
+    });
+
+    if (!res.ok) {
+        alert("DOCX export failed");
+        return;
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "GDD.docx";
+    a.click();
+    window.URL.revokeObjectURL(url);
+}
+
+document.getElementById("btnExportDocx").onclick = () => {
+    downloadDocx(currentGDDMarkdown);
+};
 
 window.addEventListener("DOMContentLoaded", () => {
-    refreshKBList();  
+    refreshKBList();
 });
-
