@@ -200,7 +200,11 @@ function connectWS() {
         return wsReady || Promise.resolve();
     }
 
-    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/stream");
+    ws = new WebSocket(
+        (location.protocol === "https:" ? "wss://" : "ws://") +
+        location.host +
+        "/ws/stream"
+    );
     ws.binaryType = "arraybuffer";
 
     wsReady = new Promise((resolve, reject) => {
@@ -229,12 +233,15 @@ function connectWS() {
         wsReady = null;
     };
 
-    ws.onmessage = (msg) => {
+    ws.onmessage = async (msg) => {
+
+        /* ----------- PCM Audio Frames ------------- */
         if (msg.data instanceof ArrayBuffer) {
             playPcmChunk(msg.data);
             return;
         }
 
+        /* ----------- JSON Packets ------------- */
         let d = null;
         try { d = JSON.parse(msg.data); }
         catch (err) {
@@ -242,6 +249,9 @@ function connectWS() {
             return;
         }
 
+        /* ============================================================
+           🔥 FINAL — A transcript arrives here (voice-only)
+        ============================================================ */
         if (d.type === "final") {
             const txt = d.text?.trim();
             if (!txt) {
@@ -249,56 +259,75 @@ function connectWS() {
                 return;
             }
 
-            // --------------------------------------------
-            // 🔥 Voice-triggered GDD Wizard activation
-            // --------------------------------------------
-            if (!gddWizardActive && txt.toLowerCase().includes("activate gdd wizard")) {
-                appendMessage(txt, "user");   // show transcript
-                startGDDWizard();             // launch wizard
+            const lower = txt.toLowerCase();
+
+            // ------------------------------------------------------------
+            // 🔥 Voice-trigger: "activate gdd wizard"
+            // ------------------------------------------------------------
+            if (!gddWizardActive && lower.includes("activate gdd wizard")) {
+                appendMessage(txt, "user");
+                startGDDWizard();
                 currentSessionIsVoice = false;
                 finalizeAI();
                 return;
             }
 
-            // --------------------------------------------
-            // 🔥 SHIELD #3 — Prevent duplicate text in text-mode
-            // --------------------------------------------
-            if (!micActive && !currentSessionIsVoice) {
-                // text mode → ignore transcript completely
+            // ------------------------------------------------------------
+            // 🔥 Voice answer inside GDD Wizard
+            // ------------------------------------------------------------
+            if (gddWizardActive) {
+                appendMessage(txt, "user");   // show transcript
+                await answerGDD(txt);         // call backend
+                currentSessionIsVoice = false;
                 finalizeAI();
                 return;
             }
 
-            // --------------------------------------------
-            // Voice mode → show transcript normally
-            // --------------------------------------------
-            appendMessage(txt, "user");
+            // ------------------------------------------------------------
+            // 🔥 Shield: prevent duplicates in text mode
+            // ------------------------------------------------------------
+            if (!micActive && !currentSessionIsVoice) {
+                finalizeAI();
+                return;
+            }
 
+            // ------------------------------------------------------------
+            // Normal voice-based user message (non-wizard)
+            // ------------------------------------------------------------
+            appendMessage(txt, "user");
             currentSessionIsVoice = false;
             finalizeAI();
             return;
         }
 
-
-
-
-
+        /* ============================================================
+           🔥 BLOCK ALL STREAMING DURING WIZARD
+        ============================================================ */
         if (d.type === "llm_stream") {
-            if (!currentSessionIsVoice && d.token) {
-                appendToAI(d.token);
-            }
+            if (gddWizardActive) return;   // wizard mode suppresses AI stream
+            if (!currentSessionIsVoice && d.token) appendToAI(d.token);
             return;
         }
 
         if (d.type === "llm_done") {
+            if (gddWizardActive) return;   // wizard: suppress finalization text
             if (!currentSessionIsVoice) finalizeAI();
             return;
         }
 
+        /* ============================================================
+           VOICE EVENTS
+        ============================================================ */
+
         if (d.type === "sentence_start") {
+            // block AI narration in wizard
+            if (gddWizardActive) return;
+
             const clean = (d.text || "").trim();
             if (!clean) return;
+
             currentSessionIsVoice = true;
+
             if (!currentAiDiv) {
                 currentAiDiv = appendMessage("", "ai", { streaming: true });
             }
@@ -327,6 +356,7 @@ function connectWS() {
 
     return wsReady;
 }
+
 
 /* --------------------------------------------------
    Microphone streaming (untouched)
@@ -401,30 +431,41 @@ async function sendText() {
     textInput.value = "";
 
     // 🔥 Force text-mode state reset (fixes duplicate messages)
-    currentSessionIsVoice = false;
-    micActive = false;
 
-    // 🔥 Disable mic button until user clicks again
+    currentSessionIsVoice = false;
+
+    // 🔥 PATCH C — properly stop mic if it was active
+    if (micActive) stopMic(false);
+
+    micActive = false;  // (safe now after stopMic)
+
+    /* Disable mic UI state */
     const micBtn = document.getElementById("btnStartMic");
     const stopMicBtn = document.getElementById("btnStopMic");
 
-    micBtn.classList.remove("active");  // remove glow
-    micBtn.disabled = false;            // re-enable press
-    stopMicBtn.disabled = true;         // can't stop something not running
+    micBtn.classList.remove("active");
+    micBtn.disabled = false;
+    stopMicBtn.disabled = true;
 
     try { workletNode?.disconnect(); } catch {}
     try { audioContext?.close(); } catch {}
     workletNode = null;
     audioContext = null;
 
+
     const lower = msg.toLowerCase();
 
     // 1) Already inside guided wizard
+    // 🔥 Voice-mode GDD Wizard answer (FULL STOP FIX)
     if (gddWizardActive) {
         appendMessage(msg, "user");
         await answerGDD(msg);
+        currentSessionIsVoice = false;
+        finalizeAI();
         return;
     }
+
+
 
     // 2) Start wizard
     const triggers = [
