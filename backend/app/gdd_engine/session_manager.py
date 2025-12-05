@@ -1,28 +1,21 @@
 # backend/app/gdd_engine/session_manager.py
-"""
-SessionManager class for guided GDD creation.
-Replaces former function-based module with an object API expected by gdd_api.py.
-"""
 
 import uuid
 from typing import Dict, Any, List
 from .gdd_questions import QUESTIONS
 
-# In-memory sessions store (POC)
 _GDD_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
 class SessionManager:
     def __init__(self):
-        # using module-level dict so multiple instances share state in POC
         self._store = _GDD_SESSIONS
 
     def create_session(self) -> str:
-        """Create and return a new session_id."""
         session_id = str(uuid.uuid4())
         self._store[session_id] = {
             "step": 0,
-            "answers": [],  # keep answers as ordered list
+            "answers": [],
             "completed": False
         }
         return session_id
@@ -31,28 +24,31 @@ class SessionManager:
         return session_id in self._store
 
     def add_answer(self, session_id: str, answer: str) -> None:
-        """Append answer for current question and advance step."""
         if session_id not in self._store:
             raise KeyError(f"Session '{session_id}' not found.")
+
         session = self._store[session_id]
         if session["completed"]:
             return
-        # store answer paired with question for readability (optional)
+
         step = session["step"]
         question = QUESTIONS[step] if step < len(QUESTIONS) else f"q_{step}"
-        session["answers"].append({"question": question, "answer": answer})
+
+        session["answers"].append({
+            "question": question,
+            "answer": answer
+        })
+
         session["step"] += 1
         if session["step"] >= len(QUESTIONS):
             session["completed"] = True
 
     def get_answers(self, session_id: str) -> List[Dict[str, str]]:
-        """Return a list of {question, answer} dicts in order."""
         if session_id not in self._store:
             raise KeyError(f"Session '{session_id}' not found.")
         return self._store[session_id]["answers"]
 
     def get_current_question(self, session_id: str):
-        """Return the current question text or None if finished."""
         if session_id not in self._store:
             raise KeyError(f"Session '{session_id}' not found.")
         step = self._store[session_id]["step"]
@@ -73,68 +69,31 @@ class SessionManager:
                 "completed": False
             }
 
-def build_concept(self, session_id: str) -> str:
-    """
-    Produce a combined concept string from the collected answers.
-    You can customize formatting here for better orchestrator input.
-    """
-    if session_id not in self._store:
-        raise KeyError(f"Session '{session_id}' not found.")
-    answers = self._store[session_id]["answers"]
-    lines = ["Guided GDD inputs:"]
-    
-    for idx, qa in enumerate(answers, start=1):
-        q = qa.get("question", f"Q{idx}")
-        a = qa.get("answer", "")
-        lines.append(f"{idx}. {q}\nAnswer: {a}\n")
+    # ⭐⭐⭐ FIXED + AUTO-FILL VERSION ⭐⭐⭐
+    def build_concept(self, session_id: str) -> str:
+        """
+        Builds combined GDD input text from collected answers.
+        Auto-fills missing answers with '(No answer provided)'.
+        """
+        if session_id not in self._store:
+            raise KeyError("Session not found")
 
-    # ⭐ NEW: Add structured instructions for the LLM
-    lines.append(
-        "\n### INSTRUCTIONS ###\n"
-        "Using all the answers above, generate a complete, professional-quality Game Design Document.\n"
-        "Your GDD MUST contain the following sections:\n"
-        "- Core Fantasy\n"
-        "- Target Audience\n"
-        "- Unique Selling Points\n"
-        "- Gameplay Overview\n"
-        "- Game Mechanics\n"
-        "- Progression Systems\n"
-        "- Characters / Units\n"
-        "- Monetization Strategy\n"
-        "- Inspirations\n"
-        "- Constraints (timeline, budget, team size)\n"
-        "- Additional Notes / Open Questions\n"
-        "\nFormat the output in clean Markdown.\n"
-    )
+        session = self._store[session_id]
+        answers = session["answers"]
+        total = len(QUESTIONS)
+        provided = len(answers)
 
-    return "\n".join(lines)
+        # Auto-fill missing answers
+        if provided < total:
+            for i in range(provided, total):
+                answers.append({
+                    "question": QUESTIONS[i],
+                    "answer": "(No answer provided)"
+                })
 
-def build_concept(self, session_id: str) -> str:
-    """
-    Builds the GDD concept text from all collected answers,
-    auto-filling missing answers with '(No answer provided)'.
-    """
-    if session_id not in self._store:
-        raise KeyError("Session not found")
+        # Build formatted GDD input block
+        lines = ["Guided GDD inputs:"]
+        for idx, qa in enumerate(answers, start=1):
+            lines.append(f"{idx}. {qa['question']}\nAnswer: {qa['answer']}\n")
 
-    session = self._store[session_id]
-    answers = session["answers"]
-    total = len(QUESTIONS)
-    provided = len(answers)
-
-    # Auto-fill missing answers
-    if provided < total:
-        for i in range(provided, total):
-            answers.append({
-                "question": QUESTIONS[i],
-                "answer": "(No answer provided)"
-            })
-
-    # Build formatted text
-    lines = ["Guided GDD inputs:"]
-    for idx, qa in enumerate(answers, start=1):
-        q = qa["question"]
-        a = qa["answer"]
-        lines.append(f"{idx}. {q}\nAnswer: {a}\n")
-
-    return "\n".join(lines)
+        return "\n".join(lines)
