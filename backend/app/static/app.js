@@ -168,29 +168,22 @@ function appendMessage(text, role, opts = {}) {
         wrap.textContent = text;
         div.appendChild(wrap);
 
-        // ⭐ Tooltip under AI messages
+        const container = document.getElementById("messages");
+        container.appendChild(div);
+
+        // ⭐ Tooltip
         const tip = document.createElement("div");
         tip.className = "ai-tip";
 
-        // If this is a backend-driven wizard question (not the activation notice or final GDD),
-        // do not show the tooltip under the AI message.
-        if (gddWizardActive && text && !text.startsWith("🎮") && !text.startsWith("📘")) {
-            const container = document.getElementById("messages");
-            container.appendChild(div);
-            messages.scrollTop = messages.scrollHeight;
-            return div;
-        }
-
-        if (!gddWizardActive) {
-            tip.textContent = "💡 Tip: Say “Activate GDD Wizard” to start creating a full Game Design Document.";
+        if (gddWizardActive) {
+            tip.textContent =
+                "💡 Say “Go Next” for the next question — Say “Finish GDD” to complete.";
         } else {
-            tip.textContent = "💡 Tip: Say “Go Next” when you're ready to continue.";
+            tip.textContent =
+                "💡 Tip: Say “Activate GDD Wizard” to start creating a full Game Design Document.";
         }
 
-        const container = document.getElementById("messages");
-        container.appendChild(div);
         container.appendChild(tip);
-
         messages.scrollTop = messages.scrollHeight;
         return div;
     }
@@ -203,7 +196,6 @@ function appendMessage(text, role, opts = {}) {
     messages.scrollTop = messages.scrollHeight;
     return div;
 }
-
 
 
 function appendToAI(text) {
@@ -274,6 +266,7 @@ function connectWS() {
         WIZARD EVENTS (from backend)
         -------------------------------------------------- */
         if (d.type === "wizard_notice") {
+            gddWizardActive = true;
             sendBot(d.text);
             return;
         }
