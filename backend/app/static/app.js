@@ -103,9 +103,15 @@ async function finishGDD() {
     sendBot("📘 **Your GDD is ready!**");
     sendBot(data.markdown);
 
+    // ⭐ NEW: Inform the user export is available
+    if (data.export_available) {
+        sendBot("⬇️ **Click the Export to Word button to download your GDD.**");
+    }
+
     gddWizardActive = false;
     gddSessionId = null;
 }
+
 
 /* --------------------------------------------------
    stopAllPlayback()

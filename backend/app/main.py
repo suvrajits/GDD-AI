@@ -37,7 +37,7 @@ assistant_is_speaking: Dict[str, bool] = {}
 # Wizard state
 gdd_wizard_active: Dict[str, bool] = {}
 gdd_wizard_stage: Dict[str, int] = {}
-
+gdd_session_map: Dict[str, str] = {}
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
 MIN_PADDING = 0.02
@@ -374,6 +374,17 @@ async def azure_stream(ws: WebSocket):
             return
 
         print("🟢 Final STT:", raw_text)
+        # -----------------------------------------
+        # Load QUESTIONS list (required for ALL wizard actions)
+        # -----------------------------------------
+        try:
+            from app.gdd_engine.gdd_questions import QUESTIONS
+        except Exception:
+            try:
+                from gdd_engine.gdd_questions import QUESTIONS
+            except:
+                QUESTIONS = []
+
 
         # Normalize STT:
         lower = raw_text.lower().strip()
@@ -406,55 +417,61 @@ async def azure_stream(ws: WebSocket):
         ]
 
         # WIZARD ACTIVATION (VOICE) — UNIFIED WITH TEXT MODE
-        if any(p in normalized for p in activation_phrases):
-            print("🎯 WIZARD ACTIVATED:", normalized)
-
-            from app.gdd_engine.gdd_questions import QUESTIONS
-
+        # WIZARD ACTIVATION (voice) — create a backend GDD session and store it
+        if any(re.search(rf"\b{re.escape(p)}\b", normalized) for p in activation_phrases):
+            print("🎯 WIZARD ACTIVATED (voice):", normalized)
             gdd_wizard_active[session] = True
             gdd_wizard_stage[session] = 0
 
-            # Show the same activation message as TEXT mode
+            # create server-side GDD session (non-blocking best-effort)
+            async def _start_gdd_session():
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        res = await client.post("http://localhost:8000/gdd/start")
+                    if res.status_code == 200:
+                        j = res.json()
+                        # store mapping for subsequent /gdd/answer and /gdd/finish
+                        gdd_session_map[session] = j.get("session_id")
+                        print("📡 Created gdd session:", gdd_session_map[session])
+                    else:
+                        print("⚠ /gdd/start failed:", res.status_code, res.text)
+                except Exception as e:
+                    print("❌ Exception calling /gdd/start:", e)
+
+            # launch without blocking the recognizer (fire-and-forget)
+            asyncio.run_coroutine_threadsafe(_start_gdd_session(), loop)
+
+            # immediate UI feedback
             asyncio.run_coroutine_threadsafe(
-                ws.send_json({
-                    "type": "wizard_notice",
-                    "text": "🎮 **GDD Wizard Activated!**\nSay **Go Next** anytime to proceed."
-                }),
+                ws.send_json({"type": "wizard_notice",
+                            "text": "🎮 **GDD Wizard Activated!**\nSay **Go Next** anytime to proceed."}),
                 loop
             )
-
-            # Add question numbering exactly the same as text mode
-            first_question = f"{QUESTIONS[0]})"
-
-            asyncio.run_coroutine_threadsafe(
-                ws.send_json({
-                    "type": "wizard_question",
-                    "text": first_question
-                }),
-                loop
-            )
-
-            # Also show the STT transcript of what the user said
-            asyncio.run_coroutine_threadsafe(
-                ws.send_json({"type": "final", "text": raw_text}),
-                loop
-            )
-
+            # also send first question (we can still send question text while session is being created)
+            if QUESTIONS:
+                asyncio.run_coroutine_threadsafe(
+                    ws.send_json({"type": "wizard_question",
+                                "text": f"{QUESTIONS[0]}\n(1 / {len(QUESTIONS)})"}),
+                    loop
+                )
+            # echo recognized text in UI transcript
+            asyncio.run_coroutine_threadsafe(ws.send_json({"type": "final", "text": raw_text}), loop)
             return
+
 
 
         # ---------------------------------------------------------
         # Wizard Go Next
         # ---------------------------------------------------------
+        # 2) Go Next
         if gdd_wizard_active.get(session, False) and ("go next" in normalized or normalized == "next"):
-            from app.gdd_engine.gdd_questions import QUESTIONS
-
-            stage = gdd_wizard_stage.get(session, 0) + 1
+            stage = gdd_wizard_stage[session] + 1
             if stage >= len(QUESTIONS):
                 asyncio.run_coroutine_threadsafe(
                     ws.send_json({
                         "type": "wizard_notice",
-                        "text": "🎉 All questions answered. Say 'Finish GDD'."
+                        "text": "🎉 All questions answered! Say **Finish GDD**."
                     }),
                     loop
                 )
@@ -464,28 +481,98 @@ async def azure_stream(ws: WebSocket):
             asyncio.run_coroutine_threadsafe(
                 ws.send_json({
                     "type": "wizard_question",
-                    "text": QUESTIONS[stage]
+                    "text": f"{QUESTIONS[stage]}\n({stage+1} / {len(QUESTIONS)})"
                 }),
                 loop
             )
             return
 
-        # ---------------------------------------------------------
-        # Wizard Answer
-        # ---------------------------------------------------------
-        if gdd_wizard_active.get(session, False):
-            import httpx
 
+        # ⭐⭐⭐ 3) FINISH GDD — MUST BE BEFORE ANSWER ⭐⭐⭐
+        # Finish GDD — use server-side session id
+        if gdd_wizard_active.get(session, False) and re.search(r"\b(finish gdd|generate gdd|complete gdd)\b", normalized):
+            print("🎯 FINISH GDD triggered:", normalized)
+
+            async def _finish():
+                import httpx
+                try:
+                    gdd_sid = gdd_session_map.get(session)
+                    if not gdd_sid:
+                        # nothing saved -> inform user
+                        await ws.send_json({"type": "wizard_notice", "text": "❌ No GDD session found — nothing to finish."})
+                        # reset local wizard state
+                        gdd_wizard_active[session] = False
+                        gdd_wizard_stage[session] = 0
+                        return
+
+                    print("📡 Calling /gdd/finish for gdd_sid:", gdd_sid)
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        res = await client.post("http://localhost:8000/gdd/finish", json={"session_id": gdd_sid})
+
+                    print("📡 /gdd/finish STATUS:", res.status_code)
+                    print("📡 /gdd/finish RESPONSE:", res.text)
+
+                    if res.status_code == 200:
+                        data = res.json()
+                        await ws.send_json({"type": "wizard_notice", "text": "📘 **Your GDD is ready!**"})
+                        await ws.send_json({"type": "final", "text": data.get("markdown", "")})
+                    else:
+                        await ws.send_json({"type": "wizard_notice", "text": f"❌ Error generating GDD (status {res.status_code})."})
+                except Exception as e:
+                    print("❌ ERROR inside _finish():", e)
+                    try:
+                        await ws.send_json({"type": "wizard_notice", "text": f"❌ Exception generating GDD: {e}"})
+                    except: pass
+                finally:
+                    # clear mapping and local wizard state
+                    gdd_session_map.pop(session, None)
+                    gdd_wizard_active[session] = False
+                    gdd_wizard_stage[session] = 0
+
+            asyncio.run_coroutine_threadsafe(_finish(), loop)
+            return
+
+
+
+        # ⭐⭐⭐ 4) Wizard Answer — AFTER Finish GDD ⭐⭐⭐
+        # Wizard answer (voice) — use server session id if available
+        if gdd_wizard_active.get(session, False):
             async def _record():
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        "http://localhost:8000/gdd/answer",
-                        json={"session_id": session, "answer": raw_text}
-                    )
-                await ws.send_json({
-                    "type": "wizard_answer",
-                    "text": raw_text
-                })
+                import httpx
+                try:
+                    # look up server-side gdd session_id
+                    gdd_sid = gdd_session_map.get(session)
+                    if not gdd_sid:
+                        # best-effort: create one now (sync fallback)
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            res = await client.post("http://localhost:8000/gdd/start")
+                        if res.status_code == 200:
+                            gdd_sid = res.json().get("session_id")
+                            gdd_session_map[session] = gdd_sid
+                            print("📡 Created fallback gdd session:", gdd_sid)
+                        else:
+                            print("⚠ Failed to create fallback gdd session:", res.status_code, res.text)
+                            # still try to return a UI notice
+                            await ws.send_json({"type": "wizard_notice", "text": "❌ Could not create GDD session (try again)."})
+                            return
+
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        res = await client.post(
+                            "http://localhost:8000/gdd/answer",
+                            json={"session_id": gdd_sid, "answer": raw_text},
+                            timeout=10.0
+                        )
+
+                    if res.status_code == 200:
+                        await ws.send_json({"type": "wizard_answer", "text": raw_text})
+                    else:
+                        print("⚠ /gdd/answer failed:", res.status_code, res.text)
+                        await ws.send_json({"type": "wizard_notice", "text": "❌ Failed to save answer."})
+                except Exception as e:
+                    print("❌ Exception posting /gdd/answer:", e)
+                    try:
+                        await ws.send_json({"type": "wizard_notice", "text": f"❌ Error saving answer: {e}"})
+                    except: pass
 
             asyncio.run_coroutine_threadsafe(_record(), loop)
             return

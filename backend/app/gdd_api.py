@@ -175,4 +175,5 @@ async def gdd_finish(payload: FinishInput):
         "concept": concept,
         "results": results,
         "markdown": markdown,
+        "export_available": True  # ⭐ NEW: signals frontend that DOCX export can be triggered
     }

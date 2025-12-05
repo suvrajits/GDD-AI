@@ -73,17 +73,39 @@ class SessionManager:
                 "completed": False
             }
 
-    def build_concept(self, session_id: str) -> str:
-        """
-        Produce a combined concept string from the collected answers.
-        You can customize formatting here for better orchestrator input.
-        """
-        if session_id not in self._store:
-            raise KeyError(f"Session '{session_id}' not found.")
-        answers = self._store[session_id]["answers"]
-        lines = ["Guided GDD inputs:"] 
-        for idx, qa in enumerate(answers, start=1):
-            q = qa.get("question", f"Q{idx}")
-            a = qa.get("answer", "")
-            lines.append(f"{idx}. {q}\nAnswer: {a}\n")
-        return "\n".join(lines)
+def build_concept(self, session_id: str) -> str:
+    """
+    Produce a combined concept string from the collected answers.
+    You can customize formatting here for better orchestrator input.
+    """
+    if session_id not in self._store:
+        raise KeyError(f"Session '{session_id}' not found.")
+    answers = self._store[session_id]["answers"]
+    lines = ["Guided GDD inputs:"]
+    
+    for idx, qa in enumerate(answers, start=1):
+        q = qa.get("question", f"Q{idx}")
+        a = qa.get("answer", "")
+        lines.append(f"{idx}. {q}\nAnswer: {a}\n")
+
+    # ⭐ NEW: Add structured instructions for the LLM
+    lines.append(
+        "\n### INSTRUCTIONS ###\n"
+        "Using all the answers above, generate a complete, professional-quality Game Design Document.\n"
+        "Your GDD MUST contain the following sections:\n"
+        "- Core Fantasy\n"
+        "- Target Audience\n"
+        "- Unique Selling Points\n"
+        "- Gameplay Overview\n"
+        "- Game Mechanics\n"
+        "- Progression Systems\n"
+        "- Characters / Units\n"
+        "- Monetization Strategy\n"
+        "- Inspirations\n"
+        "- Constraints (timeline, budget, team size)\n"
+        "- Additional Notes / Open Questions\n"
+        "\nFormat the output in clean Markdown.\n"
+    )
+
+    return "\n".join(lines)
+
