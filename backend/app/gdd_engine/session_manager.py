@@ -109,3 +109,32 @@ def build_concept(self, session_id: str) -> str:
 
     return "\n".join(lines)
 
+def build_concept(self, session_id: str) -> str:
+    """
+    Builds the GDD concept text from all collected answers,
+    auto-filling missing answers with '(No answer provided)'.
+    """
+    if session_id not in self._store:
+        raise KeyError("Session not found")
+
+    session = self._store[session_id]
+    answers = session["answers"]
+    total = len(QUESTIONS)
+    provided = len(answers)
+
+    # Auto-fill missing answers
+    if provided < total:
+        for i in range(provided, total):
+            answers.append({
+                "question": QUESTIONS[i],
+                "answer": "(No answer provided)"
+            })
+
+    # Build formatted text
+    lines = ["Guided GDD inputs:"]
+    for idx, qa in enumerate(answers, start=1):
+        q = qa["question"]
+        a = qa["answer"]
+        lines.append(f"{idx}. {q}\nAnswer: {a}\n")
+
+    return "\n".join(lines)
