@@ -71,29 +71,26 @@ class SessionManager:
 
     # ⭐⭐⭐ FIXED + AUTO-FILL VERSION ⭐⭐⭐
     def build_concept(self, session_id: str) -> str:
-        """
-        Builds combined GDD input text from collected answers.
-        Auto-fills missing answers with '(No answer provided)'.
-        """
         if session_id not in self._store:
-            raise KeyError("Session not found")
+            raise KeyError(f"Session '{session_id}' not found.")
 
         session = self._store[session_id]
         answers = session["answers"]
-        total = len(QUESTIONS)
-        provided = len(answers)
+        total_questions = len(QUESTIONS)
 
         # Auto-fill missing answers
-        if provided < total:
-            for i in range(provided, total):
+        if len(answers) < total_questions:
+            for i in range(len(answers), total_questions):
                 answers.append({
                     "question": QUESTIONS[i],
                     "answer": "(No answer provided)"
                 })
 
-        # Build formatted GDD input block
         lines = ["Guided GDD inputs:"]
         for idx, qa in enumerate(answers, start=1):
-            lines.append(f"{idx}. {qa['question']}\nAnswer: {qa['answer']}\n")
+            q = qa["question"]
+            a = qa["answer"]
+            lines.append(f"{idx}. {q}\nAnswer: {a}\n")
 
         return "\n".join(lines)
+

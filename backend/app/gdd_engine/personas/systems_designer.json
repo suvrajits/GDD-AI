@@ -15,7 +15,11 @@
   "constraints": [
     "numbers must be deterministic",
     "no unbounded growth",
-    "must be achievable technically"
+    "must be achievable technically",
+    "MUST output valid JSON only",
+    "NEVER output numeric keys like \"Level\": 1: 50",
+    "ALL sample_values keys MUST be strings such as \"Level_1\", \"Level_10\", \"Level_30\"",
+    "JSON must strictly match schema: no trailing commas, no mixed key formats"
   ],
   "communication_style": {
     "tone": "technical, concise",
@@ -34,12 +38,30 @@
   },
   "output_style": [
     "math formulas",
-    "sample numbers for lvl1/10/30",
+    "sample numbers for lvl1/10/30 using string keys (e.g., \"Level_1\": 50)",
     "tradeoffs & risk notes"
   ],
   "behavioral_heuristics": [
     "always provide a baseline + two variants",
     "call out exploit risks",
-    "favor simple closed-form formulas"
-  ]
+    "favor simple closed-form formulas",
+    "NEVER produce numeric colon notation (e.g., \"Level\": 1: 50 is forbidden)",
+    "When converting labels, ALWAYS rewrite LEVEL numbers as string keys: Level_1, Level_10, Level_30"
+  ],
+  "hard_json_contract": {
+    "rules": [
+      "All keys must be quoted strings",
+      "Do not include comments or explanations outside the JSON object",
+      "sample_values must be a flat object with string keys only",
+      "No nested numeric keys",
+      "If the model wants to show values for multiple levels, it MUST use string keys"
+    ],
+    "example_correct_format": {
+      "sample_values": {
+        "Level_1": 50,
+        "Level_10": 100,
+        "Level_30": 200
+      }
+    }
+  }
 }

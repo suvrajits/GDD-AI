@@ -229,6 +229,22 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 
         gdd_wizard_active[session] = True
         gdd_wizard_stage[session] = 0
+        # ⭐ NEW — text mode uses the websocket session as GDD session_id
+        # Create REAL backend GDD session (same flow as voice)
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.post("http://localhost:8000/gdd/start")
+        j = res.json()
+
+        real_sid = j.get("session_id")
+        gdd_session_map[session] = real_sid
+
+        # Send REAL session_id to frontend
+        await ws.send_json({
+            "type": "gdd_session_id",
+            "session_id": real_sid
+        })
+
 
         await ws.send_json({
             "type": "wizard_notice",
@@ -246,28 +262,44 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
     # -----------------------------
     # 2) GO NEXT (TEXT)
     # -----------------------------
-    if gdd_wizard_active.get(session, False) and ("go next" in normalized or normalized == "next"):
-        from app.gdd_engine.gdd_questions import QUESTIONS
+    if gdd_wizard_active.get(session, False):
+        import httpx
 
-        stage = gdd_wizard_stage.get(session, 0) + 1
+        # get the real backend session id we created earlier for this websocket session
+        real_sid = gdd_session_map.get(session)
+        if not real_sid:
+            # defensive: if not found, create one (best-effort) so user's answer isn't lost
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    res = await client.post("http://localhost:8000/gdd/start")
+                    if res.status_code == 200:
+                        j = res.json()
+                        real_sid = j.get("session_id")
+                        gdd_session_map[session] = real_sid
+            except Exception as e:
+                print("❌ Could not create backend gdd session for text answer:", e)
 
-        # If done with all questions, instruct user to finish
-        if stage >= len(QUESTIONS):
+        if not real_sid:
+            # inform user client-side that we couldn't save the answer
             await ws.send_json({
                 "type": "wizard_notice",
-                "text": "🎉 All questions answered! Say **Finish GDD** to generate your document."
+                "text": "❌ Unable to save GDD answer (no backend session). Try activating the GDD Wizard again."
             })
             return
 
-        gdd_wizard_stage[session] = stage
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "http://localhost:8000/gdd/answer",
+                json={"session_id": real_sid, "answer": text}
+            )
 
         await ws.send_json({
-            "type": "wizard_question",
-            "text": f"{QUESTIONS[stage]}"
+            "type": "wizard_answer",
+            "text": text
         })
 
+        return  # remain in wizard; do not call LLM
 
-        return  # do not run LLM
 
     # -----------------------------
     # 3) ANSWER INSIDE WIZARD (TEXT)
@@ -434,6 +466,15 @@ async def azure_stream(ws: WebSocket):
                         # store mapping for subsequent /gdd/answer and /gdd/finish
                         gdd_session_map[session] = j.get("session_id")
                         print("📡 Created gdd session:", gdd_session_map[session])
+                        # ⭐ NEW — send session id to frontend so export works
+                        try:
+                            await ws.send_json({
+                                "type": "gdd_session_id",
+                                "session_id": gdd_session_map[session]
+                            })
+                        except Exception as e:
+                            print("❌ Failed to send gdd_session_id:", e)
+
                     else:
                         print("⚠ /gdd/start failed:", res.status_code, res.text)
                 except Exception as e:
@@ -514,7 +555,7 @@ async def azure_stream(ws: WebSocket):
 
                     if res.status_code == 200:
                         data = res.json()
-                        await ws.send_json({"type": "wizard_notice", "text": "📘 **Your GDD is ready!**"})
+                        await ws.send_json({"type": "wizard_notice", "text": "📘 **Your GDD is ready! Say Download GDD to Downnload it**"})
                         await ws.send_json({"type": "final", "text": data.get("markdown", "")})
                     else:
                         await ws.send_json({"type": "wizard_notice", "text": f"❌ Error generating GDD (status {res.status_code})."})
@@ -525,9 +566,8 @@ async def azure_stream(ws: WebSocket):
                     except: pass
                 finally:
                     # clear mapping and local wizard state
-                    gdd_session_map.pop(session, None)
                     gdd_wizard_active[session] = False
-                    gdd_wizard_stage[session] = 0
+                    #gdd_wizard_stage[session] = 0
 
             asyncio.run_coroutine_threadsafe(_finish(), loop)
             return
@@ -565,6 +605,7 @@ async def azure_stream(ws: WebSocket):
                     import httpx
                     try:
                         gdd_sid = gdd_session_map.get(session)
+                        print("🔍 EXPORT CHECK — gdd_session_map:", gdd_session_map)
                         if not gdd_sid:
                             print("❌ No GDD SID for answer")
                             return
@@ -582,6 +623,57 @@ async def azure_stream(ws: WebSocket):
 
                 asyncio.run_coroutine_threadsafe(_record(), loop)
                 return  # <-- Prevent fallthrough
+
+        # ---------------------------------------------------------
+        # Wizard Export GDD (VOICE)
+        # ---------------------------------------------------------
+        # ---------------------------------------------------------
+        # Voice Export GDD (works even after wizard is done)
+        # ---------------------------------------------------------
+        if (
+            "export gdd" in normalized or
+            "export the gdd" in normalized or
+            "download gdd" in normalized or
+            "export document" in normalized
+        ):
+            gdd_sid = gdd_session_map.get(session)
+            if not gdd_sid:
+                asyncio.run_coroutine_threadsafe(
+                    ws.send_json({
+                        "type": "wizard_notice",
+                        "text": "❌ No GDD available to export. Please finish GDD first."
+                    }),
+                    loop
+                )
+                return
+
+            print("🎯 EXPORT GDD triggered:", normalized)
+
+            async def _export():
+                import httpx
+                print(f"📡 Calling /gdd/export for gdd_sid: {gdd_sid}")
+
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        "http://localhost:8000/gdd/export",
+                        json={"session_id": gdd_sid}
+                    )
+
+                if res.status_code != 200:
+                    await ws.send_json({
+                        "type": "wizard_notice",
+                        "text": f"❌ Export failed ({res.status_code})."
+                    })
+                    return
+
+                # Tell frontend to download file
+                await ws.send_json({
+                    "type": "gdd_export_ready",
+                    "filename": f"GDD_{gdd_sid}.docx"
+                })
+
+            asyncio.run_coroutine_threadsafe(_export(), loop)
+            return
 
 
         # ---------------------------------------------------------

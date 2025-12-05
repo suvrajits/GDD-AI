@@ -1,5 +1,4 @@
 # backend/app/gdd_api.py
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
@@ -10,6 +9,9 @@ from app.gdd_engine.session_manager import SessionManager
 from app.gdd_engine.gdd_questions import QUESTIONS
 
 import uuid
+import os
+import tempfile
+from docx import Document
 
 router = APIRouter()
 session_mgr = SessionManager()
@@ -29,6 +31,9 @@ class AnswerInput(BaseModel):
     answer: str
 
 class FinishInput(BaseModel):
+    session_id: str
+
+class ExportBySessionRequest(BaseModel):
     session_id: str
 
 
@@ -52,13 +57,15 @@ async def orchestrate_gdd(payload: GDDRequest):
 
 
 # -----------------------------
-# /export-docx
+# /export-docx (manual button)
 # -----------------------------
 @router.post("/export-docx")
 async def export_docx(req: ExportRequest):
     try:
         filename = f"gdd_{uuid.uuid4().hex}.docx"
-        out_path = f"/tmp/{filename}"
+        tmp_dir = tempfile.gettempdir()
+        out_path = os.path.join(tmp_dir, filename)
+
         export_to_docx(req.markdown, out_path)
 
         return FileResponse(
@@ -71,7 +78,7 @@ async def export_docx(req: ExportRequest):
 
 
 # -----------------------------
-# /start (Guided Mode)
+# /start
 # -----------------------------
 @router.post("/start")
 async def gdd_start():
@@ -90,18 +97,7 @@ async def gdd_start():
 
 
 # -----------------------------
-# Helper: update last answer
-# -----------------------------
-def update_last_answer(session_id: str, text: str):
-    answers = session_mgr.get_answers(session_id)
-    if not answers:
-        return
-    answers[-1] = text
-    session_mgr.sessions[session_id]["answers"] = answers
-
-
-# -----------------------------
-# /answer (FINAL, CORRECT VERSION)
+# /answer
 # -----------------------------
 @router.post("/answer")
 async def gdd_answer(payload: AnswerInput):
@@ -111,21 +107,18 @@ async def gdd_answer(payload: AnswerInput):
 
     raw = payload.answer.strip()
     text = raw.lower()
-
     answers = session_mgr.get_answers(session_id)
     idx = len(answers)
 
-    # 1) GO NEXT
+    # NEXT
     if text in ("next", "go next", "next question", "continue", "done"):
         if idx >= len(QUESTIONS):
             return {
                 "status": "done",
                 "message": "All questions answered. Call /finish to generate the GDD.",
             }
-
         if idx == 0 or len(answers) == idx:
             session_mgr.add_answer(session_id, "")
-
         return {
             "status": "ok",
             "question": QUESTIONS[idx],
@@ -133,15 +126,14 @@ async def gdd_answer(payload: AnswerInput):
             "total": len(QUESTIONS),
         }
 
-    # 2) Brainstorming (stay in same question)
+    # Brainstorming
     if idx == 0 or len(answers) == idx:
         session_mgr.add_answer(session_id, raw)
     else:
         combined = answers[-1] + f"\n{raw}"
-        update_last_answer(session_id, combined)
+        answers[-1] = combined
 
     stay_index = idx - 1 if idx > 0 else 0
-
     return {
         "status": "stay",
         "message": "Noted. Continue brainstorming or say 'next' to continue.",
@@ -160,12 +152,7 @@ async def gdd_finish(payload: FinishInput):
     if not session_mgr.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    answers = session_mgr.get_answers(session_id)
-    if len(answers) < len(QUESTIONS):
-        raise HTTPException(status_code=400, detail="Not all questions answered yet.")
-
     concept = session_mgr.build_concept(session_id)
-
     orchestrator = GDDOrchestrator(concept)
     results = orchestrator.run_pipeline()
     markdown = results["integration"]["markdown"]
@@ -175,5 +162,67 @@ async def gdd_finish(payload: FinishInput):
         "concept": concept,
         "results": results,
         "markdown": markdown,
-        "export_available": True  # ⭐ NEW: signals frontend that DOCX export can be triggered
+        "export_available": True
     }
+
+
+# -----------------------------
+# /export-by-session (button UI)
+# -----------------------------
+@router.post("/export-by-session")
+async def gdd_export_session(payload: ExportBySessionRequest):
+
+    session_id = payload.session_id
+    if not session_mgr.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    concept = session_mgr.build_concept(session_id)
+    orchestrator = GDDOrchestrator(concept)
+    results = orchestrator.run_pipeline()
+    markdown = results["integration"]["markdown"]
+
+    filename = f"gdd_{uuid.uuid4().hex}.docx"
+    tmp_dir = tempfile.gettempdir()
+    out_path = os.path.join(tmp_dir, filename)
+
+    export_to_docx(markdown, out_path)
+
+    return FileResponse(
+        out_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="Game_Design_Document.docx",
+    )
+
+
+# -----------------------------
+# /export   (VOICE + UI final)
+# -----------------------------
+@router.post("/export")
+async def export_gdd(payload: dict):
+
+    manager = SessionManager()
+
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id missing")
+
+    if not manager.session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Invalid session_id")
+
+    concept_text = manager.build_concept(session_id)
+
+    filename = f"GDD_{session_id}.docx"
+    tmp_dir = tempfile.gettempdir()
+    tmp_path = os.path.join(tmp_dir, filename)
+
+    # Write concept text to docx
+    doc = Document()
+    for line in concept_text.split("\n"):
+        doc.add_paragraph(line)
+    doc.save(tmp_path)
+
+    return FileResponse(
+        tmp_path,
+        filename=f"GDD_{session_id}.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
