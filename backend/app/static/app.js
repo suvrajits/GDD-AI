@@ -20,6 +20,9 @@ let gddWizardActive = false;
 let gddSessionId = null;
 let currentGDDMarkdown = "";
 
+let gddIndex = 0;
+let gddTotal = 14; 
+
 /* --------------------------------------------------
    Wizard Utility
 -------------------------------------------------- */
@@ -39,7 +42,7 @@ async function startGDDWizard() {
     gddSessionId = data.session_id;
 
     sendBot("🎮 **GDD Wizard Activated!**\nSay **Go Next** anytime to proceed.");
-    sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
+    //sendBot(`${data.question}\n(${data.index + 1} / ${data.total})`);
 }
 
 async function answerGDD(userText) {
@@ -272,7 +275,16 @@ function connectWS() {
         }
 
         if (d.type === "wizard_question") {
-            sendBot(d.text);
+            // Wizard question arrived from backend → increment index
+            if (!window.gddIndexInitialized) {
+                window.gddIndex = 0;              // first question
+                window.gddTotal = 14;             // update if backend sends total
+                window.gddIndexInitialized = true;
+            } else {
+                window.gddIndex++;                // next question
+            }
+
+            sendBot(`${d.text}\n(${window.gddIndex + 1} / ${window.gddTotal})`);
             return;
         }
 

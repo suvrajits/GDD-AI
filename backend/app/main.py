@@ -424,7 +424,7 @@ async def azure_stream(ws: WebSocket):
             )
 
             # Add question numbering exactly the same as text mode
-            first_question = f"{QUESTIONS[0]}\n(1 / {len(QUESTIONS)})"
+            first_question = f"{QUESTIONS[0]})"
 
             asyncio.run_coroutine_threadsafe(
                 ws.send_json({
