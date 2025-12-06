@@ -312,7 +312,7 @@ function connectWS() {
                     currentSessionIsVoice = true;
 
                     // ⭐ NEW: Prepare streaming UI for incoming PCM
-                    currentAiDiv = appendMessage("", "ai", { streaming: true });
+                    currentAiDiv = null;//appendMessage("", "ai", { streaming: true });
             }
 
             return;
@@ -429,11 +429,15 @@ function connectWS() {
            SENTENCE START
         -------------------------------------------------- */
         if (d.type === "sentence_start") {
-            // ALLOW wizard TTS to show the spoken text
             const clean = (d.text || "").trim();
             if (!clean) return;
 
             currentSessionIsVoice = true;
+
+            // ❌ Prevent both blank bubble AND duplicate text in wizard mode
+            if (gddWizardActive) {
+                return;
+            }
 
             if (!currentAiDiv) {
                 currentAiDiv = appendMessage("", "ai", { streaming: true });
