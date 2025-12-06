@@ -85,7 +85,7 @@ speech_tts_config = speechsdk.SpeechConfig(
     subscription=AZURE_SPEECH_KEY,
     region=AZURE_SPEECH_REGION
 )
-speech_tts_config.speech_synthesis_voice_name = "en-US-JennyNeural"
+speech_tts_config.speech_synthesis_voice_name = "en-IN-NeerjaNeural"
 speech_tts_config.set_speech_synthesis_output_format(
     speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm
 )
