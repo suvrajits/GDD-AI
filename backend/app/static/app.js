@@ -92,13 +92,14 @@ async function finishGDD() {
     });
 
     const data = await res.json();
-
+    if (data.session_id) gddSessionId = data.session_id;
     if (data.status !== "ok") {
         sendBot("❌ Error generating GDD.");
         return;
     }
 
     currentGDDMarkdown = data.markdown;
+    gddSessionId = data.session_id;   // restore session id
     sendBot("📘 **Your GDD is ready!**");
     sendBot(data.markdown);
 
@@ -236,6 +237,7 @@ function connectWS() {
     wsReady = new Promise((resolve, reject) => {
         const onOpen = () => {
             console.log("WS connected");
+            document.getElementById("btnStartMic").disabled = false;
             ws.removeEventListener("open", onOpen);
             ws.removeEventListener("error", onError);
             resolve();
@@ -257,6 +259,7 @@ function connectWS() {
         currentSessionIsVoice = false;
         ws = null;
         wsReady = null;
+        document.getElementById("btnStartMic").disabled = false;
     };
 
     ws.onmessage = async (msg) => {
@@ -277,6 +280,14 @@ function connectWS() {
            WIZARD EVENTS
         -------------------------------------------------- */
         if (d.type === "wizard_notice") {
+
+            // Do NOT re-trigger wizard after final GDD ready message
+            if (d.text.includes("Your GDD is ready")) {
+                sendBot(d.text);
+                gddWizardActive = false;
+                return;
+            }
+
             gddWizardActive = true;
             sendBot(d.text);
             return;
@@ -300,7 +311,7 @@ function connectWS() {
             return;
         }
 
-        // ⭐ NEW — Backend sends GDD session_id so export works
+        // Backend sends session ID for exporting
         if (d.type === "gdd_session_id") {
             console.log("🔗 Linked GDD session:", d.session_id);
             gddSessionId = d.session_id;
@@ -314,12 +325,34 @@ function connectWS() {
         }
 
         /* --------------------------------------------------
-           FINAL TRANSCRIPT
+           FINAL STT TRANSCRIPT
         -------------------------------------------------- */
         if (d.type === "final") {
             const txt = d.text?.trim();
             if (!txt) { finalizeAI(); return; }
 
+            const lower = txt.toLowerCase();  // ⭐ declared ONCE
+
+            // ⭐ ALWAYS intercept export voice commands FIRST
+            if (
+                lower.includes("download gdd") ||
+                lower.includes("export gdd") ||
+                lower.includes("export document") ||
+                lower.includes("export the gdd")
+            ) {
+                if (!currentGDDMarkdown || currentGDDMarkdown.trim().length < 30) {
+                    sendBot("❌ The GDD is not ready yet. Say **Finish GDD** first.");
+                    finalizeAI();
+                    return;
+                }
+
+                console.log("📥 Voice command → Export GDD");
+                downloadGDD();
+                finalizeAI();
+                return;
+            }
+
+            // Wizard handling
             if (gddWizardActive) {
                 if (txt.startsWith("📘")) {
                     sendBot(txt);
@@ -328,9 +361,7 @@ function connectWS() {
                 return;
             }
 
-            const lower = txt.toLowerCase();
-
-            // Activate GDD Wizard
+            // Activate wizard
             if (!gddWizardActive && lower.includes("activate gdd wizard")) {
                 appendMessage(txt, "user");
                 currentSessionIsVoice = false;
@@ -338,7 +369,7 @@ function connectWS() {
                 return;
             }
 
-            // Export (voice)
+            // Secondary export pattern match
             if (
                 lower.includes("export gdd") ||
                 lower.includes("download gdd") ||
@@ -347,6 +378,13 @@ function connectWS() {
                 lower.includes("export the gdd")
             ) {
                 console.log("📥 Voice command → Export GDD");
+
+                if (!currentGDDMarkdown || currentGDDMarkdown.trim().length < 30) {
+                    sendBot("❌ The GDD is not ready yet. Say **Finish GDD** first.");
+                    finalizeAI();
+                    return;
+                }
+
                 downloadGDD();
                 finalizeAI();
                 return;
@@ -360,7 +398,7 @@ function connectWS() {
         }
 
         /* --------------------------------------------------
-           AI Streaming
+           LLM STREAMING
         -------------------------------------------------- */
         if (d.type === "llm_stream") {
             if (gddWizardActive) return;
@@ -375,16 +413,19 @@ function connectWS() {
         }
 
         /* --------------------------------------------------
-           Sentence Start
+           SENTENCE START
         -------------------------------------------------- */
         if (d.type === "sentence_start") {
             if (gddWizardActive) return;
             const clean = (d.text || "").trim();
             if (!clean) return;
+
             currentSessionIsVoice = true;
+
             if (!currentAiDiv) {
                 currentAiDiv = appendMessage("", "ai", { streaming: true });
             }
+
             currentAiDiv.querySelector(".content").textContent += clean + " ";
             messages.scrollTop = messages.scrollHeight;
             return;
@@ -402,14 +443,11 @@ function connectWS() {
             finalizeAI();
             return;
         }
-
-        if (d.type === "partial") {
-            return;
-        }
     };
 
     return wsReady;
 }
+
 
 /* --------------------------------------------------
    Microphone (unchanged)
@@ -438,6 +476,8 @@ async function startMicStreaming() {
 function stopMic(closeWs = true) {
     micActive = false;
     document.getElementById("btnStartMic").classList.remove("active");
+
+    document.getElementById("btnStartMic").disabled = false;
 
     try { workletNode?.disconnect(); } catch {}
     try { audioContext?.close(); } catch {}
@@ -664,7 +704,7 @@ document.getElementById("btnExportDocx").onclick = () => {
 -------------------------------------------------- */
 async function downloadGDD() {
     if (!gddSessionId) {
-        sendBot("❌ No GDD available to export. Please finish GDD first.");
+        sendBot("❌ No active GDD session to export.");
         return;
     }
 
@@ -681,16 +721,11 @@ async function downloadGDD() {
 
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
+
     const a = document.createElement("a");
     a.href = url;
-    a.download = "Game_Design_Document.docx";
-    document.body.appendChild(a);
+    a.download = `GDD_${gddSessionId}.docx`;
     a.click();
-    a.remove();
 
-    sendBot("📄 **Your GDD has been exported!**");
+    window.URL.revokeObjectURL(url);
 }
-
-window.addEventListener("DOMContentLoaded", () => {
-    refreshKBList();
-});

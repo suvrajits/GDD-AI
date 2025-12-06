@@ -63,8 +63,7 @@ async def orchestrate_gdd(payload: GDDRequest):
 async def export_docx(req: ExportRequest):
     try:
         filename = f"gdd_{uuid.uuid4().hex}.docx"
-        tmp_dir = tempfile.gettempdir()
-        out_path = os.path.join(tmp_dir, filename)
+        out_path = os.path.join(tempfile.gettempdir(), filename)
 
         export_to_docx(req.markdown, out_path)
 
@@ -130,8 +129,8 @@ async def gdd_answer(payload: AnswerInput):
     if idx == 0 or len(answers) == idx:
         session_mgr.add_answer(session_id, raw)
     else:
-        combined = answers[-1] + f"\n{raw}"
-        answers[-1] = combined
+        combined = answers[-1]["answer"] + f"\n{raw}"
+        answers[-1]["answer"] = combined
 
     stay_index = idx - 1 if idx > 0 else 0
     return {
@@ -144,7 +143,7 @@ async def gdd_answer(payload: AnswerInput):
 
 
 # -----------------------------
-# /finish
+# /finish  (GENERATES & STORES FINAL MARKDOWN)
 # -----------------------------
 @router.post("/finish")
 async def gdd_finish(payload: FinishInput):
@@ -155,10 +154,15 @@ async def gdd_finish(payload: FinishInput):
     concept = session_mgr.build_concept(session_id)
     orchestrator = GDDOrchestrator(concept)
     results = orchestrator.run_pipeline()
+
     markdown = results["integration"]["markdown"]
+
+    # ⭐ FIX — store inside _store, not nonexistent .sessions
+    session_mgr._store[session_id]["markdown"] = markdown  # <-- FIXED
 
     return {
         "status": "ok",
+        "session_id": session_id,
         "concept": concept,
         "results": results,
         "markdown": markdown,
@@ -167,7 +171,7 @@ async def gdd_finish(payload: FinishInput):
 
 
 # -----------------------------
-# /export-by-session (button UI)
+# /export-by-session  (UI button)
 # -----------------------------
 @router.post("/export-by-session")
 async def gdd_export_session(payload: ExportBySessionRequest):
@@ -176,14 +180,13 @@ async def gdd_export_session(payload: ExportBySessionRequest):
     if not session_mgr.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    concept = session_mgr.build_concept(session_id)
-    orchestrator = GDDOrchestrator(concept)
-    results = orchestrator.run_pipeline()
-    markdown = results["integration"]["markdown"]
+    # ⭐ FIX — use _store instead of .sessions
+    markdown = session_mgr._store[session_id].get("markdown")  # <-- FIXED
+    if not markdown:
+        raise HTTPException(status_code=400, detail="GDD not generated yet. Call /finish first.")
 
     filename = f"gdd_{uuid.uuid4().hex}.docx"
-    tmp_dir = tempfile.gettempdir()
-    out_path = os.path.join(tmp_dir, filename)
+    out_path = os.path.join(tempfile.gettempdir(), filename)
 
     export_to_docx(markdown, out_path)
 
@@ -195,34 +198,29 @@ async def gdd_export_session(payload: ExportBySessionRequest):
 
 
 # -----------------------------
-# /export   (VOICE + UI final)
+# /export   (VOICE + UI FINAL → NO RE-GENERATION)
 # -----------------------------
 @router.post("/export")
 async def export_gdd(payload: dict):
 
-    manager = SessionManager()
-
     session_id = payload.get("session_id")
     if not session_id:
-        raise HTTPException(status_code=400, detail="session_id missing")
+        raise HTTPException(status_code=400, detail="Missing session_id")
 
-    if not manager.session_exists(session_id):
+    if not session_mgr.session_exists(session_id):
         raise HTTPException(status_code=404, detail="Invalid session_id")
 
-    concept_text = manager.build_concept(session_id)
+    # ⭐ FIX — use saved markdown
+    markdown = session_mgr._store[session_id].get("markdown")  # <-- FIXED
+    if not markdown:
+        raise HTTPException(status_code=400, detail="GDD not generated yet. Say 'Finish GDD' first.")
 
-    filename = f"GDD_{session_id}.docx"
-    tmp_dir = tempfile.gettempdir()
-    tmp_path = os.path.join(tmp_dir, filename)
+    tmp_path = os.path.join(tempfile.gettempdir(), f"GDD_{session_id}.docx")
 
-    # Write concept text to docx
-    doc = Document()
-    for line in concept_text.split("\n"):
-        doc.add_paragraph(line)
-    doc.save(tmp_path)
+    export_to_docx(markdown, tmp_path)
 
     return FileResponse(
         tmp_path,
-        filename=f"GDD_{session_id}.docx",
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"GDD_{session_id}.docx"
     )
