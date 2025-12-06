@@ -302,9 +302,22 @@ function connectWS() {
                 window.gddIndex++;
             }
 
+            // Show text in chat
             sendBot(`${d.text}\n(${window.gddIndex + 1} / ${window.gddTotal})`);
+
+            // ⭐ If backend included a 'voice' field, treat this as TTS —
+            // stop any previous playback and enable voice-session mode so PCM audio will be played.
+            if (d.voice) {
+                    stopAllPlayback();
+                    currentSessionIsVoice = true;
+
+                    // ⭐ NEW: Prepare streaming UI for incoming PCM
+                    currentAiDiv = appendMessage("", "ai", { streaming: true });
+            }
+
             return;
         }
+
 
         if (d.type === "wizard_answer") {
             appendMessage(d.text, "user");
@@ -416,7 +429,7 @@ function connectWS() {
            SENTENCE START
         -------------------------------------------------- */
         if (d.type === "sentence_start") {
-            if (gddWizardActive) return;
+            // ALLOW wizard TTS to show the spoken text
             const clean = (d.text || "").trim();
             if (!clean) return;
 
@@ -430,6 +443,7 @@ function connectWS() {
             messages.scrollTop = messages.scrollHeight;
             return;
         }
+
 
         if (d.type === "voice_done") {
             currentSessionIsVoice = false;
@@ -459,7 +473,8 @@ async function startMicStreaming() {
     document.getElementById("btnStartMic").classList.add("active");
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new AudioContext({ sampleRate: 16000 });
+    audioContext = new AudioContext();
+
 
     await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
 

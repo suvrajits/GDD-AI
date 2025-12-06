@@ -160,11 +160,13 @@ async def tts_playback_worker(session: str):
                 except: pass
                 break
 
-            if sentence_text and user_last_input_was_voice.get(session, False):
+            # Always announce sentence_start for wizard TTS OR normal TTS
+            if sentence_text:
                 try:
                     await ws.send_json({"type": "sentence_start", "text": sentence_text})
                 except:
-                    break
+                    pass
+
 
             try:
                 audio_bytes = await gen_task
@@ -253,8 +255,23 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
 
         await ws.send_json({
             "type": "wizard_question",
-            "text": f"{QUESTIONS[0]}"
+            "text": f"{QUESTIONS[0]}",
+            "voice": f"{QUESTIONS[0]}"
         })
+
+        # queue TTS for this question
+        async def _enqueue_first_question():
+            cleaned = clean_sentence_for_tts(QUESTIONS[0])
+            if cleaned:
+                tts_sentence_queue[session].append(cleaned)
+                task = asyncio.create_task(async_tts(cleaned))
+                tts_gen_tasks[session].append(task)
+                if session not in tts_playback_task or tts_playback_task[session].done():
+                    tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
+
+        # schedule enqueue on the event loop
+        asyncio.run_coroutine_threadsafe(_enqueue_first_question(), asyncio.get_event_loop())
+
 
 
         return  # IMPORTANT: do not run LLM in wizard mode
@@ -293,12 +310,45 @@ async def handle_text_message(ws: WebSocket, text: str, session: str):
                 json={"session_id": real_sid, "answer": text}
             )
 
+        # Acknowledge user answer
         await ws.send_json({
             "type": "wizard_answer",
             "text": text
         })
 
-        return  # remain in wizard; do not call LLM
+        # Move to next question
+        from app.gdd_engine.gdd_questions import QUESTIONS
+        stage = gdd_wizard_stage[session] + 1
+
+        if stage >= len(QUESTIONS):
+            await ws.send_json({
+                "type": "wizard_notice",
+                "text": "🎉 All questions answered! Say **Finish GDD** to generate it."
+            })
+            return
+
+        gdd_wizard_stage[session] = stage
+
+        # Send next question with voice flag
+        await ws.send_json({
+            "type": "wizard_question",
+            "text": QUESTIONS[stage],
+            "voice": QUESTIONS[stage]
+        })
+
+        # Queue TTS
+        async def _enqueue():
+            cleaned = clean_sentence_for_tts(QUESTIONS[stage])
+            if cleaned:
+                tts_sentence_queue[session].append(cleaned)
+                task = asyncio.create_task(async_tts(cleaned))
+                tts_gen_tasks[session].append(task)
+                if session not in tts_playback_task or tts_playback_task[session].done():
+                    tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
+
+        asyncio.get_event_loop().create_task(_enqueue())
+
+        return
 
 
     # -----------------------------
@@ -492,10 +542,26 @@ async def azure_stream(ws: WebSocket):
             # also send first question (we can still send question text while session is being created)
             if QUESTIONS:
                 asyncio.run_coroutine_threadsafe(
-                    ws.send_json({"type": "wizard_question",
-                                "text": f"{QUESTIONS[0]}"}),
+                    ws.send_json({
+                        "type": "wizard_question",
+                        "text": f"{QUESTIONS[0]}",
+                        "voice": f"{QUESTIONS[0]}"
+                    }),
                     loop
                 )
+
+                # enqueue TTS on the loop
+                async def _enqueue_first_question():
+                    cleaned = clean_sentence_for_tts(QUESTIONS[0])
+                    if cleaned:
+                        tts_sentence_queue[session].append(cleaned)
+                        task = asyncio.create_task(async_tts(cleaned))
+                        tts_gen_tasks[session].append(task)
+                        if session not in tts_playback_task or tts_playback_task[session].done():
+                            tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
+
+                asyncio.run_coroutine_threadsafe(_enqueue_first_question(), loop)
+
             # echo recognized text in UI transcript
             asyncio.run_coroutine_threadsafe(ws.send_json({"type": "final", "text": raw_text}), loop)
             return
@@ -522,10 +588,23 @@ async def azure_stream(ws: WebSocket):
             asyncio.run_coroutine_threadsafe(
                 ws.send_json({
                     "type": "wizard_question",
-                    "text": f"{QUESTIONS[stage]}"
+                    "text": f"{QUESTIONS[stage]}",
+                    "voice": f"{QUESTIONS[stage]}"
                 }),
                 loop
             )
+
+            async def _enqueue_next_question(qtext):
+                cleaned = clean_sentence_for_tts(qtext)
+                if cleaned:
+                    tts_sentence_queue[session].append(cleaned)
+                    task = asyncio.create_task(async_tts(cleaned))
+                    tts_gen_tasks[session].append(task)
+                    if session not in tts_playback_task or tts_playback_task[session].done():
+                        tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
+
+            asyncio.run_coroutine_threadsafe(_enqueue_next_question(QUESTIONS[stage]), loop)
+
             return
 
 
