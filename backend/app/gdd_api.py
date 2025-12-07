@@ -1,4 +1,5 @@
 # backend/app/gdd_api.py
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
@@ -11,14 +12,13 @@ from app.gdd_engine.gdd_questions import QUESTIONS
 import uuid
 import os
 import tempfile
-from docx import Document
 
 router = APIRouter()
 session_mgr = SessionManager()
 
-# -----------------------------
-# Request Models
-# -----------------------------
+# --------------------------------------------------------------------
+# Request models
+# --------------------------------------------------------------------
 class GDDRequest(BaseModel):
     concept: str
     pinned_notes: dict | None = None
@@ -33,13 +33,16 @@ class AnswerInput(BaseModel):
 class FinishInput(BaseModel):
     session_id: str
 
+class NextRequest(BaseModel):
+    session_id: str
+
 class ExportBySessionRequest(BaseModel):
     session_id: str
 
 
-# -----------------------------
-# /api/orchestrate
-# -----------------------------
+# --------------------------------------------------------------------
+# /api/orchestrate — unchanged
+# --------------------------------------------------------------------
 @router.post("/api/orchestrate")
 async def orchestrate_gdd(payload: GDDRequest):
     try:
@@ -53,112 +56,147 @@ async def orchestrate_gdd(payload: GDDRequest):
             "markdown": results["integration"]["markdown"],
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(400, str(e))
 
 
-# -----------------------------
-# /export-docx (manual button)
-# -----------------------------
+# --------------------------------------------------------------------
+# /export-docx — unchanged
+# --------------------------------------------------------------------
 @router.post("/export-docx")
 async def export_docx(req: ExportRequest):
     try:
         filename = f"gdd_{uuid.uuid4().hex}.docx"
         out_path = os.path.join(tempfile.gettempdir(), filename)
-
         export_to_docx(req.markdown, out_path)
-
         return FileResponse(
             out_path,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             filename="gdd_output.docx",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
 
-# -----------------------------
-# /start
-# -----------------------------
+# --------------------------------------------------------------------
+# /start — return first question
+# --------------------------------------------------------------------
 @router.post("/start")
 async def gdd_start():
     session_id = session_mgr.create_session()
 
-    if not QUESTIONS:
-        raise HTTPException(status_code=500, detail="QUESTIONS list is empty.")
+    session_mgr._store[session_id]["answers"] = []
+    session_mgr._store[session_id]["index"] = 0
 
     return {
         "status": "ok",
         "session_id": session_id,
         "question": QUESTIONS[0],
         "index": 0,
-        "total": len(QUESTIONS),
+        "total": len(QUESTIONS)
     }
 
 
-# -----------------------------
-# /answer
-# -----------------------------
+# --------------------------------------------------------------------
+# /next — return next question
+# --------------------------------------------------------------------
+@router.post("/next")
+async def gdd_next(req: NextRequest):
+    session_id = req.session_id
+    if not session_mgr.session_exists(session_id):
+        raise HTTPException(404, "Session not found")
+
+    data = session_mgr._store[session_id]
+    index = data.get("index", 0)
+    total = len(QUESTIONS)
+
+    # End of list → wizard completed
+    if index >= total:
+        return {"status": "done"}
+
+    question = QUESTIONS[index]
+
+    # Advance pointer
+    data["index"] = index + 1
+
+    return {
+        "status": "ok",
+        "question": question,
+        "index": index,
+        "total": total
+    }
+
+
+# --------------------------------------------------------------------
+# /answer — save answer along with the corresponding question
+# --------------------------------------------------------------------
 @router.post("/answer")
 async def gdd_answer(payload: AnswerInput):
     session_id = payload.session_id
     if not session_mgr.session_exists(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(404, "Session not found")
 
     raw = payload.answer.strip()
-    text = raw.lower()
-    answers = session_mgr.get_answers(session_id)
-    idx = len(answers)
+    data = session_mgr._store[session_id]
 
-    # NEXT
-    if text in ("next", "go next", "next question", "continue", "done"):
-        if idx >= len(QUESTIONS):
-            return {
-                "status": "done",
-                "message": "All questions answered. Call /finish to generate the GDD.",
-            }
-        if idx == 0 or len(answers) == idx:
-            session_mgr.add_answer(session_id, "")
-        return {
-            "status": "ok",
-            "question": QUESTIONS[idx],
-            "index": idx,
-            "total": len(QUESTIONS),
-        }
+    index = data.get("index", 0)
+    total = len(QUESTIONS)
 
-    # Brainstorming
-    if idx == 0 or len(answers) == idx:
-        session_mgr.add_answer(session_id, raw)
+    # If user answers after wizard finished
+    if index == 0:
+        q_index = 0
     else:
-        combined = answers[-1]["answer"] + f"\n{raw}"
-        answers[-1]["answer"] = combined
+        q_index = index - 1
 
-    stay_index = idx - 1 if idx > 0 else 0
-    return {
-        "status": "stay",
-        "message": "Noted. Continue brainstorming or say 'next' to continue.",
-        "question": QUESTIONS[stay_index],
-        "index": stay_index,
-        "total": len(QUESTIONS),
-    }
+    if q_index >= total:
+        return {"status": "done"}
+
+    answers = data.get("answers", [])
+
+    # Ensure structure
+    while len(answers) <= q_index:
+        answers.append({"question": QUESTIONS[len(answers)], "answer": ""})
+
+    # Append or overwrite cleanly
+    if answers[q_index]["answer"]:
+        answers[q_index]["answer"] += "\n" + raw
+    else:
+        answers[q_index]["answer"] = raw
+
+    data["answers"] = answers
+
+    return {"status": "ok", "recorded_for": q_index}
 
 
-# -----------------------------
-# /finish  (GENERATES & STORES FINAL MARKDOWN)
-# -----------------------------
+# --------------------------------------------------------------------
+# /finish — build concept safely
+# --------------------------------------------------------------------
 @router.post("/finish")
 async def gdd_finish(payload: FinishInput):
     session_id = payload.session_id
     if not session_mgr.session_exists(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(404, "Session not found")
 
-    concept = session_mgr.build_concept(session_id)
+    data = session_mgr._store[session_id]
+    answers = data.get("answers", [])
+
+    # ---------- FIXED KEY ERROR ----------
+    concept_parts = []
+    for qa in answers:
+        q = qa.get("question")
+        a = qa.get("answer", "").strip()
+        if not q or not a:
+            continue
+        concept_parts.append(f"{q}\n{a}")
+
+    concept = "\n\n".join(concept_parts)
+    if not concept.strip():
+        concept = "No meaningful answers were provided."
+
     orchestrator = GDDOrchestrator(concept)
     results = orchestrator.run_pipeline()
 
     markdown = results["integration"]["markdown"]
-
-    # ⭐ FIX — store inside _store, not nonexistent .sessions
-    session_mgr._store[session_id]["markdown"] = markdown  # <-- FIXED
+    data["markdown"] = markdown
 
     return {
         "status": "ok",
@@ -170,53 +208,47 @@ async def gdd_finish(payload: FinishInput):
     }
 
 
-# -----------------------------
-# /export-by-session  (UI button)
-# -----------------------------
+# --------------------------------------------------------------------
+# /export-by-session — unchanged
+# --------------------------------------------------------------------
 @router.post("/export-by-session")
 async def gdd_export_session(payload: ExportBySessionRequest):
-
     session_id = payload.session_id
     if not session_mgr.session_exists(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(404, "Session not found")
 
-    # ⭐ FIX — use _store instead of .sessions
-    markdown = session_mgr._store[session_id].get("markdown")  # <-- FIXED
+    markdown = session_mgr._store[session_id].get("markdown")
     if not markdown:
-        raise HTTPException(status_code=400, detail="GDD not generated yet. Call /finish first.")
+        raise HTTPException(400, "GDD not generated yet.")
 
     filename = f"gdd_{uuid.uuid4().hex}.docx"
     out_path = os.path.join(tempfile.gettempdir(), filename)
-
     export_to_docx(markdown, out_path)
 
     return FileResponse(
         out_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="Game_Design_Document.docx",
+        filename="Game_Design_Document.docx"
     )
 
 
-# -----------------------------
-# /export   (VOICE + UI FINAL → NO RE-GENERATION)
-# -----------------------------
+# --------------------------------------------------------------------
+# /export — final voice export
+# --------------------------------------------------------------------
 @router.post("/export")
 async def export_gdd(payload: dict):
-
     session_id = payload.get("session_id")
     if not session_id:
-        raise HTTPException(status_code=400, detail="Missing session_id")
+        raise HTTPException(400, "Missing session_id")
 
     if not session_mgr.session_exists(session_id):
-        raise HTTPException(status_code=404, detail="Invalid session_id")
+        raise HTTPException(404, "Invalid session_id")
 
-    # ⭐ FIX — use saved markdown
-    markdown = session_mgr._store[session_id].get("markdown")  # <-- FIXED
+    markdown = session_mgr._store[session_id].get("markdown")
     if not markdown:
-        raise HTTPException(status_code=400, detail="GDD not generated yet. Say 'Finish GDD' first.")
+        raise HTTPException(400, "No generated markdown. Say 'Finish GDD' first.")
 
     tmp_path = os.path.join(tempfile.gettempdir(), f"GDD_{session_id}.docx")
-
     export_to_docx(markdown, tmp_path)
 
     return FileResponse(

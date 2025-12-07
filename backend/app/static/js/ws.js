@@ -1,5 +1,5 @@
-// ws.js  (FULLY PATCHED FOR NEW GDD WIZARD)
-// ------------------------------------------
+// ws.js  (Unified + Cleaned for New Wizard System)
+// -----------------------------------------------
 
 import { appendMessage, appendToAI, finalizeAI } from "./ui.js";
 import { downloadGDD, setGDDSessionId } from "./gdd.js";
@@ -11,40 +11,54 @@ let ttsAudioContext = null;
 let aiStreaming = false;
 
 /* --------------------------------------------------
-   Stop playback
+   Stop all audio playback
 -------------------------------------------------- */
 export function stopAllPlayback() {
-    try { if (ttsAudioContext?.close) ttsAudioContext.close(); }
-    catch {}
+    try {
+        if (ttsAudioContext && typeof ttsAudioContext.close === "function") {
+            ttsAudioContext.close();
+        }
+    } catch (err) {
+        console.warn("stopAllPlayback failed:", err);
+    }
     ttsAudioContext = null;
 }
 
 /* --------------------------------------------------
-   PCM playback
+   PCM Playback (16kHz mono)
 -------------------------------------------------- */
 export function playPcmChunk(buffer) {
-    if (!ttsAudioContext)
-        ttsAudioContext = new AudioContext();
+    try {
+        if (!ttsAudioContext) {
+            ttsAudioContext = new AudioContext();
+        }
 
-    const pcm = new Int16Array(buffer);
-    const f32 = new Float32Array(pcm.length);
+        const pcm = new Int16Array(buffer);
+        const f32 = new Float32Array(pcm.length);
 
-    for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+        for (let i = 0; i < pcm.length; i++) {
+            f32[i] = pcm[i] / 32768;
+        }
 
-    const audioBuffer = ttsAudioContext.createBuffer(1, f32.length, 16000);
-    audioBuffer.getChannelData(0).set(f32);
+        const audioBuffer = ttsAudioContext.createBuffer(1, f32.length, 16000);
+        audioBuffer.getChannelData(0).set(f32);
 
-    const src = ttsAudioContext.createBufferSource();
-    src.buffer = audioBuffer;
-    src.connect(ttsAudioContext.destination);
-    src.start();
+        const src = ttsAudioContext.createBufferSource();
+        src.buffer = audioBuffer;
+        src.connect(ttsAudioContext.destination);
+        src.start();
+    }
+    catch (err) {
+        console.error("PCM playback error:", err);
+    }
 }
 
 /* --------------------------------------------------
    connectWS()
 -------------------------------------------------- */
 export function connectWS() {
-    if (ws && (ws.readyState === 0 || ws.readyState === 1)) {
+    // Already connected or connecting
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         return wsReady || Promise.resolve();
     }
 
@@ -59,7 +73,11 @@ export function connectWS() {
             document.getElementById("btnStartMic").disabled = false;
             resolve();
         });
-        ws.addEventListener("error", reject);
+
+        ws.addEventListener("error", (err) => {
+            console.error("WS error:", err);
+            reject(err);
+        });
     });
 
     ws.onclose = () => {
@@ -75,33 +93,43 @@ export function connectWS() {
 }
 
 /* --------------------------------------------------
-   WebSocket Message Router
+   WebSocket Router
 -------------------------------------------------- */
 async function onWSMessage(msg) {
 
+    // PCM audio packets
     if (msg.data instanceof ArrayBuffer) {
         playPcmChunk(msg.data);
         return;
     }
 
-    let d = {};
-    try { d = JSON.parse(msg.data); }
-    catch { return; }
+    let d;
+    try {
+        d = JSON.parse(msg.data);
+    } catch {
+        return;
+    }
 
-    // ============================================================
-    // 🟩 NEW WIZARD EVENTS (voice-driven)
-    // ============================================================
+    // ================================
+    //  WIZARD EVENTS (Unified)
+    // ================================
 
-    // Backend tells frontend which session ID belongs to wizard
+    // Backend → Wizard session ID
     if (d.type === "gdd_session_id") {
         setGDDSessionId(d.session_id);
         return;
     }
 
-    // Backend sends next question (voice)
+    // Wizard → Recognized user answer (voice)
+    if (d.type === "wizard_answer") {
+        appendMessage(d.text, "user");
+        return;
+    }
+
+    // Wizard → Next question
     if (d.type === "gdd_next") {
         const idx = (d.index !== undefined && d.index !== null)
-            ? (d.index + 1)
+            ? d.index + 1
             : "?";
         const total = d.total ?? "?";
 
@@ -109,38 +137,32 @@ async function onWSMessage(msg) {
         return;
     }
 
-    // Backend sends wizard_answer (voice transcription)
-    if (d.type === "wizard_answer") {
-        appendMessage(d.text, "user");
-        return;
-    }
-
-    // Backend indicates wizard is done
+    // Wizard → Finished all questions
     if (d.type === "gdd_done") {
         appendMessage("🎉 All questions answered! Say **Finish GDD**.", "ai");
         return;
     }
 
-    // Backend says export is ready
+    // Wizard → Ask UI to download the GDD file
     if (d.type === "gdd_export_ready") {
         downloadGDD();
         return;
     }
 
-    // ============================================================
-    // 🟦 NORMAL FINAL STT
-    // ============================================================
+    // ================================
+    //  STT Final
+    // ================================
     if (d.type === "final") {
         appendMessage(d.text, "user");
         return;
     }
 
-    // ============================================================
-    // 🟪 LLM STREAMING (same as before)
-    // ============================================================
+    // ================================
+    //  LLM Streaming
+    // ================================
     if (d.type === "llm_stream") {
         if (!aiStreaming) {
-            appendToAI(""); // create bubble
+            appendToAI(""); // Create bubble
             aiStreaming = true;
         }
         appendToAI(d.token);
@@ -153,12 +175,12 @@ async function onWSMessage(msg) {
         return;
     }
 
-    // ============================================================
-    // 🟧 TTS STREAMING
-    // ============================================================
+    // ================================
+    //  TTS Synth Streaming
+    // ================================
     if (d.type === "sentence_start") {
         if (!aiStreaming) {
-            appendToAI(""); // create bubble
+            appendToAI("");
             aiStreaming = true;
         }
         appendToAI(d.text + " ");
@@ -171,6 +193,9 @@ async function onWSMessage(msg) {
         return;
     }
 
+    // ================================
+    //  Stop All
+    // ================================
     if (d.type === "stop_all") {
         stopAllPlayback();
         finalizeAI();
