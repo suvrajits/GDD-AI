@@ -204,11 +204,6 @@ async def tts_playback_worker(session: str):
 
             # notify frontend about upcoming sentence (UI sync)
             # Only UI-sync wizard questions; LLM sentences already shown
-            if source == "wizard" and sentence_text:
-                try:
-                    await ws.send_json({"type": "sentence_start", "text": sentence_text})
-                except:
-                    pass
 
 
             # await audio generation result
@@ -397,9 +392,6 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                 cleaned = clean_sentence_for_tts(QUESTIONS[0])
                 if cleaned:
                     enqueue_sentence_for_tts(session, cleaned, source="wizard")
-                    tts_gen_tasks[session].append(asyncio.create_task(async_tts(cleaned)))
-                    if session not in tts_playback_task or (tts_playback_task[session] and tts_playback_task[session].done()):
-                        tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
         except Exception:
             pass
 
@@ -440,9 +432,6 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
         cleaned = clean_sentence_for_tts(QUESTIONS[stage])
         if cleaned:
             enqueue_sentence_for_tts(session, cleaned, source="wizard")
-            tts_gen_tasks[session].append(asyncio.create_task(async_tts(cleaned)))
-            if session not in tts_playback_task or (tts_playback_task[session] and tts_playback_task[session].done()):
-                tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
         return True
 
     # -------- FINISH GDD ----------

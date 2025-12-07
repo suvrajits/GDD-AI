@@ -107,10 +107,39 @@ async function onWSMessage(msg) {
     if (d.type === "gdd_session_id") return setGDDSessionId(d.session_id);
     if (d.type === "wizard_answer") return appendMessage(d.text, "user");
     if (d.type === "gdd_export_ready") return downloadGDD();
-    if (d.type === "gdd_next") {
-        appendMessage(`Q(${d.index + 1}/${d.total}): ${d.question}`, "ai");
+    // --------------------------------------------------
+    // WIZARD QUESTION (with Qx / N label + tooltip)
+    // --------------------------------------------------
+    if (d.type === "wizard_question") {
+
+        // compute question index and total
+        const Q = window.GDD_QUESTIONS || [];
+        const currentIndex = Q.indexOf(d.text);   // 0-based
+        const total = Q.length;
+
+        const label = (currentIndex >= 0)
+            ? `Q(${currentIndex + 1}/${total}): ${d.text}`
+            : d.text;
+
+        finalizeAI();  // ⬅ ensure wizard question always appears as its own standalone bubble
+        appendMessage(label, "ai");
+
+
+        // refresh tooltip
+        import("./ui.js").then(m => m.createTooltip?.());
+
         return;
     }
+
+    if (d.type === "gdd_next") {
+        appendMessage(`Q(${d.index + 1}/${d.total}): ${d.question}`, "ai");
+
+        // refresh tooltip
+        import("./ui.js").then(m => m.createTooltip?.());
+
+        return;
+    }
+
     if (d.type === "gdd_done") {
         appendMessage("🎉 All questions answered! Say Finish GDD.", "ai");
         return;
@@ -127,6 +156,10 @@ async function onWSMessage(msg) {
 
     // ---------- LLM SENTENCE STREAM ----------
     if (d.type === "llm_sentence") {
+
+        // ❌ Never mix wizard questions inside a streaming LLM bubble
+        if (d.source === "wizard") return;
+
         if (!aiStreaming) {
             aiBubble = startNewAIBubble();
             aiStreaming = true;
@@ -134,6 +167,7 @@ async function onWSMessage(msg) {
         aiBubble.querySelector(".content").textContent += d.sentence + " ";
         return;
     }
+
 
     if (d.type === "llm_done") {
         finalizeAI();
@@ -144,13 +178,20 @@ async function onWSMessage(msg) {
 
     // ---------- TTS / SPEECH SYNC ----------
     if (d.type === "sentence_start") {
+
+        // ❌ Do NOT render wizard TTS sentences (they already appear via wizard_question)
+        if (d.source === "wizard") return;
+
+        // Normal LLM speech streaming
         if (!aiStreaming) {
             aiBubble = startNewAIBubble();
             aiStreaming = true;
         }
+
         aiBubble.querySelector(".content").textContent += (d.text || "").trim() + " ";
         return;
     }
+
 
     if (d.type === "voice_done") {
         finalizeAI();

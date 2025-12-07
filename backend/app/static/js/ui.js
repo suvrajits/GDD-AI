@@ -104,3 +104,4 @@ export function finalizeAI() {
     const container = document.getElementById("messages");
     container.scrollTop = container.scrollHeight;
 }
+export { createTooltip };
