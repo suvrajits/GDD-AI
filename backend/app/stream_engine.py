@@ -187,7 +187,12 @@ async def tts_playback_worker(session: str):
                 continue
 
             gen_task = tts_gen_tasks[session].pop(0)
-            sentence_text = tts_sentence_queue[session].pop(0) if tts_sentence_queue[session] else ""
+            item = tts_sentence_queue[session].pop(0)
+            if isinstance(item, tuple):
+                sentence_text, source = item
+            else:
+                sentence_text, source = item, "llm"
+
 
             # if cancellation occurred after pop
             if tts_cancel_events[session].is_set():
@@ -198,7 +203,13 @@ async def tts_playback_worker(session: str):
                 break
 
             # notify frontend about upcoming sentence (UI sync)
-           
+            # Only UI-sync wizard questions; LLM sentences already shown
+            if source == "wizard" and sentence_text:
+                try:
+                    await ws.send_json({"type": "sentence_start", "text": sentence_text})
+                except:
+                    pass
+
 
             # await audio generation result
             try:
@@ -242,16 +253,19 @@ async def tts_playback_worker(session: str):
 # ------------------------------------------------------------------
 # Enqueue TTS generation for a sentence (non-blocking)
 # ------------------------------------------------------------------
-def enqueue_sentence_for_tts(session: str, sentence: str):
-    """Schedule TTS generation for `sentence` and ensure playback worker is running."""
+def enqueue_sentence_for_tts(session: str, sentence: str, source="llm"):
     ensure_structs(session)
     if not sentence:
         return
+
+    # mark each queued item with its source
+    tts_sentence_queue[session].append((sentence, source))
+
     task = asyncio.create_task(async_tts(sentence))
     tts_gen_tasks[session].append(task)
-    tts_sentence_queue[session].append(sentence)
-    # start playback worker if not running
-    if not tts_playback_task.get(session) or (tts_playback_task[session] and tts_playback_task[session].done()):
+
+    # ensure playback worker running
+    if not tts_playback_task.get(session) or tts_playback_task[session].done():
         tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
 
 # ------------------------------------------------------------------
@@ -381,7 +395,7 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                 # queue first question TTS
                 cleaned = clean_sentence_for_tts(QUESTIONS[0])
                 if cleaned:
-                    tts_sentence_queue[session].append(cleaned)
+                    enqueue_sentence_for_tts(session, cleaned, source="wizard")
                     tts_gen_tasks[session].append(asyncio.create_task(async_tts(cleaned)))
                     if session not in tts_playback_task or (tts_playback_task[session] and tts_playback_task[session].done()):
                         tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
@@ -423,7 +437,7 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
         # queue TTS for the next question
         cleaned = clean_sentence_for_tts(QUESTIONS[stage])
         if cleaned:
-            tts_sentence_queue[session].append(cleaned)
+            enqueue_sentence_for_tts(session, cleaned, source="wizard")
             tts_gen_tasks[session].append(asyncio.create_task(async_tts(cleaned)))
             if session not in tts_playback_task or (tts_playback_task[session] and tts_playback_task[session].done()):
                 tts_playback_task[session] = asyncio.create_task(tts_playback_worker(session))
