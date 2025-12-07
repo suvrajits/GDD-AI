@@ -381,7 +381,11 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                 print("❌ Exception calling /gdd/start:", e)
 
         asyncio.create_task(_start())
-
+        # echo recognized text for transcript
+        try:
+            await ws.send_json({"type": "final", "text": raw_text})
+        except Exception:
+            pass
         # notify UI & send first question text+voice
         try:
             await ws.send_json({"type": "wizard_notice", "text": "🎮 **GDD Wizard Activated!** Say *Go Next* anytime."})
@@ -395,11 +399,7 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
         except Exception:
             pass
 
-        # echo recognized text for transcript
-        try:
-            await ws.send_json({"type": "final", "text": raw_text})
-        except Exception:
-            pass
+ 
 
         return True
 
