@@ -79,3 +79,20 @@ async def stream_llm(user_text: str):
         err = f"[LLM ERROR] {e}"
         print("❌ LLM Streaming Error:", err)
         yield err
+
+async def run_completion(prompt: str, max_tokens: int = 150):
+    """
+    Simple one-shot non-streaming completion for internal system use.
+    """
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI()
+
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=0.4,
+    )
+
+    return resp.choices[0].message["content"]

@@ -325,6 +325,30 @@ async def stream_llm_to_client(ws: WebSocket, session: str, user_text: str):
     # mark not busy (allow next calls)
     llm_busy[session] = False
 
+
+# --------------------------------------------------------------------
+# ONE-SHOT LLM REVIEW FUNCTION (Azure Realtime, same as stream_llm)
+# --------------------------------------------------------------------
+async def run_llm_short_review(prompt: str) -> str:
+    """
+    Runs a short Azure review using the SAME Realtime pipeline
+    used by stream_llm().
+    """
+    system = (
+        "You are a constructive assistant that gives concise, helpful feedback "
+        "on a single GDD answer. Stay strictly on-topic. Keep it under 3 sentences."
+    )
+
+    full_prompt = f"{system}\n\n{prompt}"
+
+    full_text = ""
+    async for token in stream_llm(full_prompt):
+        if token:
+            full_text += token
+
+    return full_text.strip()
+
+
 # ------------------------------------------------------------------
 # Unified GDD Wizard handler (single code path for text & voice)
 # Returns True if wizard handled the message (no LLM call should follow)
@@ -511,33 +535,93 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
     # -------- SAVE ANSWER INSIDE WIZARD ----------
     if gdd_wizard_active.get(session, False):
         # ignore extremely short/noisy fragments
-        if len(raw_text.split()) < 3:
-            # not useful to save, but consume as handled
+        # ignore only pure noise, not short answers
+        noise = {".", "uh", "um", ""}
+        if raw_text.lower().strip() in noise:
             return True
+
 
         async def _record_answer():
             try:
-                gdd_sid = gdd_session_map.get(session)
-                if not gdd_sid:
-                    # best-effort: create backend session then save
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        res = await client.post("http://localhost:8000/gdd/start")
-                        if res.status_code == 200:
-                            j = res.json()
-                            gdd_session_map[session] = j.get("session_id")
-                            gdd_sid = gdd_session_map[session]
-                if not gdd_sid:
-                    return
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    await client.post("http://localhost:8000/gdd/answer", json={"session_id": gdd_sid, "answer": raw_text})
+                ...
                 await ws.send_json({"type": "wizard_answer", "text": raw_text})
+
+                # Now run LLM review SAFELY
+                async def _review():
+                    try:
+                        from app.gdd_engine.gdd_questions import QUESTIONS
+                        stage = gdd_wizard_stage.get(session, 0)
+                        question_text = QUESTIONS[stage] if 0 <= stage < len(QUESTIONS) else ""
+
+                        review_prompt = (
+                            f"Question:\n{question_text}\n\n"
+                            f"User Answer:\n{raw_text}\n\n"
+                            "Provide a short, helpful critique. Stay strictly on the topic of the question."
+                        )
+
+                        review = await run_llm_short_review(review_prompt)
+
+                        await ws.send_json({
+                            "type": "ai_review",
+                            "text": review
+                        })
+
+                        cleaned = clean_sentence_for_tts(review)
+                        if cleaned:
+                            enqueue_sentence_for_tts(session, cleaned, source="wizard")
+
+                    except Exception as e:
+                        print("❌ LLM review failed:", e)
+
+
+                asyncio.create_task(_review())
+
             except Exception as e:
                 print("❌ /gdd/answer failed:", e)
+
+
 
         asyncio.create_task(_record_answer())
         return True
 
     return False
+
+async def generate_gdd_answer_review(question: str, answer: str) -> str:
+    """
+    Generates a short 2–3 sentence LLM review.
+    Focuses strictly on the given question.
+    """
+
+    review_prompt = f"""
+You are a senior game designer reviewing ONE answer to a GDD question.
+Stay strictly inside THIS question's context.
+
+QUESTION:
+{question}
+
+ANSWER:
+{answer}
+
+Provide a short, concise 2–3 sentence suggestion.
+Do NOT ask new questions.
+Do NOT change topic.
+Only critique or refine the answer itself.
+"""
+
+    try:
+        # Correct import for your orchestrator
+        from app.llm_orchestrator import run_completion
+
+        # Send one-shot LLM call
+        suggestion = await run_completion(review_prompt, max_tokens=120)
+
+        return suggestion.strip()
+
+    except Exception as e:
+        print("❌ LLM review failed:", e)
+        return "👍 Answer noted."
+
+
 
 # ------------------------------------------------------------------
 # Main voice stream entrypoint (to be used by FastAPI websocket route)

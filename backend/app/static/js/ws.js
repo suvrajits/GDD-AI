@@ -118,6 +118,14 @@ async function onWSMessage(msg) {
         return;
     }
 
+    // --- NEW: AI review for each answer ---
+    if (d.type === "ai_review") {
+        appendMessage(d.text, "ai");
+        createTooltip();
+        return;
+    }
+
+
     if (d.type === "gdd_export_ready") {
         downloadGDD();
         createTooltip();
