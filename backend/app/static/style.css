@@ -334,3 +334,38 @@ body {
     user-select: none;
     font-style: italic;
 }
+
+/* =========================================
+   GDD WIZARD — ULTRA-SUBTLE AQUA GLOW
+========================================= */
+
+.msg.ai.gdd-glow {
+    position: relative;
+    box-shadow:
+        0 0 4px 1px rgba(0, 255, 240, 0.35),   /* inner halo */
+        0 0 8px 2px rgba(0, 200, 255, 0.22),   /* mid glow */
+        0 0 14px 3px rgba(0, 255, 255, 0.15);  /* soft outer tint */
+    border: 1px solid rgba(0, 255, 255, 0.45);
+    animation: gddPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes gddPulse {
+    0% {
+        box-shadow:
+            0 0 3px 1px rgba(0, 255, 240, 0.30),
+            0 0 6px 2px rgba(0, 200, 255, 0.18),
+            0 0 10px 3px rgba(0, 255, 255, 0.12);
+    }
+    50% {
+        box-shadow:
+            0 0 5px 1px rgba(0, 255, 255, 0.55),
+            0 0 10px 3px rgba(0, 200, 255, 0.28),
+            0 0 16px 4px rgba(0, 240, 255, 0.18);
+    }
+    100% {
+        box-shadow:
+            0 0 3px 1px rgba(0, 255, 240, 0.30),
+            0 0 6px 2px rgba(0, 200, 255, 0.18),
+            0 0 10px 3px rgba(0, 255, 255, 0.12);
+    }
+}

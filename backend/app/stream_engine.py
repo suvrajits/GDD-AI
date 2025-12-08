@@ -383,6 +383,35 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
 
     # -------- ACTIVATE ----------
     if any(p in normalized for p in activation_phrases):
+            # --- INTERRUPT ANY ACTIVE LLM OR TTS IMMEDIATELY ---
+        # Stop LLM streaming
+        llm_stop_flags[session] = True
+
+        # Cancel TTS generation
+        ev = tts_cancel_events.get(session)
+        if ev:
+            ev.set()
+        cancel_tts_generation(session)
+
+        # Stop TTS playback worker if active
+        worker = tts_playback_task.get(session)
+        if worker and not worker.done():
+            try:
+                worker.cancel()
+            except:
+                pass
+
+        assistant_is_speaking[session] = False
+
+        # Notify UI to stop audio & streaming bubble
+        try:
+            await ws.send_json({"type": "stop_all"})
+        except:
+            pass
+
+            # --- IMPORTANT: RESET TTS SO WIZARD CAN SPEAK AGAIN ---
+        tts_cancel_events[session] = asyncio.Event()   # 🔥 reset cancellation flag
+        assistant_is_speaking[session] = False         # ensure idle state
         # load QUESTIONS lazily
         try:
             from app.gdd_engine.gdd_questions import QUESTIONS

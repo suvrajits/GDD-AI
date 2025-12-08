@@ -109,3 +109,15 @@ export function finalizeAI() {
     const container = document.getElementById("messages");
     container.scrollTop = container.scrollHeight;
 }
+
+// --------------------------------------------------
+// GDD Glow Helpers (global UI utilities)
+// --------------------------------------------------
+export function clearGddGlow() {
+    document.querySelectorAll(".gdd-glow").forEach(el => el.classList.remove("gdd-glow"));
+}
+
+export function applyGddGlow(div) {
+    if (!div) return;
+    div.classList.add("gdd-glow");
+}

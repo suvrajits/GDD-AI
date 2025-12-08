@@ -4,7 +4,9 @@ import {
     appendToAI,
     finalizeAI,
     startNewAIBubble,
-    createTooltip
+    createTooltip,
+    clearGddGlow,
+    applyGddGlow
 } from "./ui.js";
 
 import { downloadGDD, setGDDSessionId, setGddWizardActive } from "./gdd.js";
@@ -148,18 +150,29 @@ async function onWSMessage(msg) {
         const label = `Q(${d.index + 1}/${d.total}): ${d.text}`;
 
         finalizeAI();
-        appendMessage(label, "ai");
+
+        clearGddGlow();                         // remove glow from previous question
+        const div = appendMessage(label, "ai"); // get bubble reference
+        applyGddGlow(div);                      // apply golden glow
+
         createTooltip();
         return;
     }
 
     if (d.type === "gdd_next") {
-        appendMessage(`Q(${d.index + 1}/${d.total}): ${d.question}`, "ai");
+        clearGddGlow();
 
-        // single, stable tooltip refresh
+        const div = appendMessage(
+            `Q(${d.index + 1}/${d.total}): ${d.question}`,
+            "ai"
+        );
+
+        applyGddGlow(div);
+
         createTooltip();
         return;
     }
+
 
     if (d.type === "gdd_done") {
         setGddWizardActive(false);
