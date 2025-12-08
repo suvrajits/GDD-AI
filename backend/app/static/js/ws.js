@@ -137,23 +137,11 @@ async function onWSMessage(msg) {
     // WIZARD QUESTION (with Qx / N label + tooltip)
     // --------------------------------------------------
     if (d.type === "wizard_question") {
+        const label = `Q(${d.index + 1}/${d.total}): ${d.text}`;
 
-        // compute question index and total using client's QUESTIONS if available
-        const Q = window.GDD_QUESTIONS || [];
-        const currentIndex = Q.indexOf(d.text);   // 0-based
-        const total = Q.length;
-
-        const label = (currentIndex >= 0)
-            ? `Q(${currentIndex + 1}/${total}): ${d.text}`
-            : d.text;
-
-        // ensure wizard question is its own bubble
         finalizeAI();
         appendMessage(label, "ai");
-
-        // single, stable tooltip refresh
         createTooltip();
-
         return;
     }
 

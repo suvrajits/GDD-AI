@@ -396,7 +396,14 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
 
             if QUESTIONS:
                 await ws.send_json({"type": "llm_done"})
-                await ws.send_json({"type": "wizard_question", "text": QUESTIONS[0], "voice": QUESTIONS[0]})
+                await ws.send_json({
+                    "type": "wizard_question",
+                    "text": QUESTIONS[0],
+                    "index": 0,
+                    "total": len(QUESTIONS),
+                    "voice": QUESTIONS[0]
+                })
+
                 # queue first question TTS
                 cleaned = clean_sentence_for_tts(QUESTIONS[0])
                 if cleaned:
@@ -429,7 +436,14 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
         gdd_wizard_stage[session] = stage
         try:
             await ws.send_json({"type": "llm_done"})
-            await ws.send_json({"type": "wizard_question", "text": QUESTIONS[stage], "voice": QUESTIONS[stage]})
+            await ws.send_json({
+                "type": "wizard_question",
+                "text": QUESTIONS[stage],
+                "index": stage,
+                "total": len(QUESTIONS),
+                "voice": QUESTIONS[stage]
+            })
+
         except Exception:
             pass
 
