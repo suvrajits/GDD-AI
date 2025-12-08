@@ -47,7 +47,11 @@ gdd_wizard_stage = {}          # session -> int
 gdd_session_map = {}           # session -> backend session id
 
 llm_busy = {}                  # session -> bool (prevent duplicate LLM runs)
-
+# Smart Completion buffer
+pending_user_text = {}      # session → last STT final text
+completion_timer = {}       # session → asyncio.Task
+pending_review_task = {}
+gdd_answer_buffer = {} 
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
@@ -335,15 +339,15 @@ async def run_llm_short_review(prompt: str) -> str:
     used by stream_llm().
     """
     system = (
-        "You are a top 1% Game Director mentoring a designer through a GDD wizard.\n"
-        "Your voice is authoritative, sharp, and insightful — never generic.\n"
-        "ONLY praise when the idea is genuinely strong.\n"
-        "If the answer is vague, shallow, or disconnected from the question, "
-        "ask for clearer expression or point out what's missing.\n"
-        "Keep feedback concise (2–4 sentences) and focused strictly on the question.\n"
-        "Avoid empty enthusiasm. Avoid repetitive praise.\n"
-        "Speak like a world-class creative director guiding a designer to excellence."
+        "You are a collaborative, visionary game director helping a designer shape ideas.\n"
+        "Your tone is creative, suggestive, additive — never strict or corrective.\n"
+        "Build on the user's idea with possibilities, expansions, and thoughtful suggestions.\n"
+        "Avoid policing language such as 'missing', 'incorrect', or 'does not address'.\n"
+        "Always assume the user is exploring, not failing — respond as a co-creator.\n"
+        "Keep feedback concise (2–4 sentences) but inspiring.\n"
+        "Offer optional directions the idea could evolve into, and invite refinement."
     )
+
 
 
     full_prompt = f"{system}\n\nUser Answer:\n{prompt}\n\nYour response:"
@@ -354,6 +358,58 @@ async def run_llm_short_review(prompt: str) -> str:
             full_text += token
 
     return full_text.strip()
+
+# ------------------------------------------------------------------
+# SMART COMPLETION 2.0 — Incomplete Answer Detection + Nudges
+# ------------------------------------------------------------------
+
+INCOMPLETE_MARKERS = (
+    "uh", "um", "so", "because", "like", "kinda", "sort of",
+    "basically", "i mean", "you know", "and", "which", "but"
+)
+
+NUDGES = [
+    "Go on…",
+    "Would you like to elaborate?",
+    "Feel free to continue.",
+    "Take your time — you can expand.",
+    "If that’s your full answer, I can respond — just let me know.",
+]
+
+def is_incomplete_answer(text: str) -> bool:
+    text = text.strip().lower()
+
+    # Too short to evaluate (1–2 words) = always incomplete
+    if len(text.split()) <= 2:
+        return True
+
+    # Hesitation markers at END
+    if any(text.endswith(m) for m in INCOMPLETE_MARKERS):
+        return True
+
+    # Trailing ellipsis
+    if text.endswith("..."):
+        return True
+
+    # Mid-sentence hesitation
+    if text.endswith(("uh", "um", "hmm")):
+        return True
+
+    # Ends with conjunction/comma = user is continuing
+    if re.search(r"(and|but|which|so|because|like|kinda|sort of)[\s]*$", text):
+        return True
+
+    # Short but *complete* answers (3–6 words) should be accepted
+    if 3 <= len(text.split()) <= 6:
+        return False
+
+    # Default: answer appears complete
+    return False
+
+
+def pick_nudge() -> str:
+    import random
+    return random.choice(NUDGES)
 
 
 # ------------------------------------------------------------------
@@ -381,17 +437,15 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
 
     # -------- ACTIVATE ----------
     if any(p in normalized for p in activation_phrases):
-            # --- INTERRUPT ANY ACTIVE LLM OR TTS IMMEDIATELY ---
-        # Stop LLM streaming
+
+        # INTERRUPT ANY ACTIVE LLM/TTS
         llm_stop_flags[session] = True
 
-        # Cancel TTS generation
         ev = tts_cancel_events.get(session)
         if ev:
             ev.set()
         cancel_tts_generation(session)
 
-        # Stop TTS playback worker if active
         worker = tts_playback_task.get(session)
         if worker and not worker.done():
             try:
@@ -401,16 +455,14 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
 
         assistant_is_speaking[session] = False
 
-        # Notify UI to stop audio & streaming bubble
         try:
             await ws.send_json({"type": "stop_all"})
         except:
             pass
 
-            # --- IMPORTANT: RESET TTS SO WIZARD CAN SPEAK AGAIN ---
-        tts_cancel_events[session] = asyncio.Event()   # 🔥 reset cancellation flag
-        assistant_is_speaking[session] = False         # ensure idle state
-        # load QUESTIONS lazily
+        tts_cancel_events[session] = asyncio.Event()
+        assistant_is_speaking[session] = False
+
         try:
             from app.gdd_engine.gdd_questions import QUESTIONS
         except Exception:
@@ -421,32 +473,39 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
 
         gdd_wizard_active[session] = True
         gdd_wizard_stage[session] = 0
+        gdd_answer_buffer[session] = []  # 
+        task = pending_review_task.get(session)
+        if task and not task.done():
+            try: task.cancel()
+            except: pass
+        pending_review_task[session] = None
 
-        # create backend session (best-effort)
+
         async def _start():
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     res = await client.post("http://localhost:8000/gdd/start")
+
                 if res.status_code == 200:
                     j = res.json()
-                    gdd_session_map[session] = j.get("session_id")
-                    print("📡 Created gdd session:", gdd_session_map[session])
+                    gdd_session_map[session] = j.get("session_id", "")
                     try:
                         await ws.send_json({"type": "gdd_session_id", "session_id": gdd_session_map[session]})
-                    except Exception:
+                    except:
                         pass
                 else:
-                    print("⚠ /gdd/start failed:", res.status_code, res.text)
+                    print("⚠ /gdd/start failed:", res.status_code)
+
             except Exception as e:
                 print("❌ Exception calling /gdd/start:", e)
 
         asyncio.create_task(_start())
-        # echo recognized text for transcript
+
         try:
             await ws.send_json({"type": "final", "text": raw_text})
-        except Exception:
+        except:
             pass
-        # notify UI & send first question text+voice
+
         try:
             await ws.send_json({
                 "type": "wizard_notice",
@@ -464,36 +523,49 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                     "voice": QUESTIONS[0]
                 })
 
-                # queue first question TTS
                 cleaned = clean_sentence_for_tts(QUESTIONS[0])
                 if cleaned:
                     enqueue_sentence_for_tts(session, cleaned, source="wizard")
+
         except Exception:
             pass
-
- 
 
         return True
 
     # -------- GO NEXT ----------
+    # -------- GO NEXT ----------
     if gdd_wizard_active.get(session, False) and ("go next" in normalized or normalized == "next"):
+
         try:
             from app.gdd_engine.gdd_questions import QUESTIONS
-        except Exception:
+        except:
             try:
                 from gdd_engine.gdd_questions import QUESTIONS
-            except Exception:
+            except:
                 QUESTIONS = []
 
         stage = gdd_wizard_stage.get(session, 0) + 1
+
         if stage >= len(QUESTIONS):
             try:
                 await ws.send_json({"type": "wizard_notice", "text": "🎉 All questions answered! Say **Finish GDD**."})
-            except Exception:
+            except:
                 pass
             return True
 
+        # 🔥 Cancel any pending delayed-review from the previous question
+        task = pending_review_task.get(session)
+        if task and not task.done():
+            try:
+                task.cancel()
+                print(f"[{session}] GO NEXT -> cancelled pending review task")
+            except:
+                pass
+        pending_review_task[session] = None
         gdd_wizard_stage[session] = stage
+        gdd_answer_buffer[session] = []
+
+
         try:
             await ws.send_json({"type": "llm_done"})
             await ws.send_json({
@@ -503,18 +575,18 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                 "total": len(QUESTIONS),
                 "voice": QUESTIONS[stage]
             })
-
-        except Exception:
+        except:
             pass
 
-        # queue TTS for the next question
         cleaned = clean_sentence_for_tts(QUESTIONS[stage])
         if cleaned:
             enqueue_sentence_for_tts(session, cleaned, source="wizard")
+
         return True
 
     # -------- FINISH GDD ----------
     if gdd_wizard_active.get(session, False) and re.search(r"\b(finish gdd|generate gdd|complete gdd)\b", normalized):
+
         async def _finish():
             try:
                 gdd_sid = gdd_session_map.get(session)
@@ -523,84 +595,131 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                     gdd_wizard_active[session] = False
                     gdd_wizard_stage[session] = 0
                     return
+
                 async with httpx.AsyncClient(timeout=20.0) as client:
                     res = await client.post("http://localhost:8000/gdd/finish", json={"session_id": gdd_sid})
+
                 if res.status_code == 200:
                     data = res.json()
                     await ws.send_json({"type": "wizard_notice", "text": "📘 **Your GDD is ready! Say Download GDD to Download it**"})
                     await ws.send_json({"type": "final", "text": data.get("markdown", "")})
                 else:
-                    await ws.send_json({"type": "wizard_notice", "text": f"❌ Error generating GDD (status {res.status_code})."})
+                    await ws.send_json({"type": "wizard_notice", "text": f"❌ Error generating GDD ({res.status_code})."})
+
             except Exception as e:
                 print("❌ ERROR inside _finish():", e)
-                try:
-                    await ws.send_json({"type": "wizard_notice", "text": f"❌ Exception generating GDD: {e}"})
-                except Exception:
-                    pass
+                await ws.send_json({"type": "wizard_notice", "text": "❌ Exception generating GDD."})
+
             finally:
                 gdd_wizard_active[session] = False
 
         asyncio.create_task(_finish())
         return True
 
-    # -------- EXPORT GDD ----------
+    # -------- EXPORT ----------
     if any(p in normalized for p in ("export gdd", "export the gdd", "download gdd", "export document")):
+
         gdd_sid = gdd_session_map.get(session)
         if not gdd_sid:
-            await ws.send_json({"type": "wizard_notice", "text": "❌ No GDD available to export. Please finish GDD first."})
+            await ws.send_json({"type": "wizard_notice", "text": "❌ No GDD available to export. Finish GDD first."})
             return True
 
         async def _export():
             try:
                 async with httpx.AsyncClient() as client:
                     res = await client.post("http://localhost:8000/gdd/export", json={"session_id": gdd_sid})
+
                 if res.status_code != 200:
                     await ws.send_json({"type": "wizard_notice", "text": f"❌ Export failed ({res.status_code})."})
                     return
+
                 await ws.send_json({"type": "gdd_export_ready", "filename": f"GDD_{gdd_sid}.docx"})
-            except Exception as e:
-                print("❌ Export error:", e)
-                try:
-                    await ws.send_json({"type": "wizard_notice", "text": "❌ Export failed."})
-                except:
-                    pass
+
+            except Exception:
+                await ws.send_json({"type": "wizard_notice", "text": "❌ Export failed."})
 
         asyncio.create_task(_export())
         return True
 
-    # -------- SAVE ANSWER INSIDE WIZARD ----------
+    # ------------------------------------------------------------------
+    # -------- SAVE ANSWER (THE BLOCK YOU NEEDED FIXED) ---------------
+    # ------------------------------------------------------------------
     if gdd_wizard_active.get(session, False):
-        # ignore extremely short/noisy fragments
-        # ignore only pure noise, not short answers
+
         noise = {".", "uh", "um", ""}
         if raw_text.lower().strip() in noise:
             return True
 
-
         async def _record_answer():
             try:
-                ...
+                task = pending_review_task.get(session)
+                if task and not task.done():
+                    try:
+                        task.cancel()
+                    except:
+                        pass
+
                 await ws.send_json({"type": "wizard_answer", "text": raw_text})
 
-                # Now run LLM review SAFELY
+                # 🔥 Add this:
+                gdd_answer_buffer.setdefault(session, []).append(raw_text.strip())
+
+
+                # =============== DEFINE _review() ====================
                 async def _review():
                     try:
                         from app.gdd_engine.gdd_questions import QUESTIONS
                         stage = gdd_wizard_stage.get(session, 0)
                         question_text = QUESTIONS[stage] if 0 <= stage < len(QUESTIONS) else ""
+                        answer = " ".join(gdd_answer_buffer[session]).strip()
 
+
+                        # 1) Incomplete → nudge only
+                        last = gdd_answer_buffer[session][-1]
+                        if is_incomplete_answer(answer):
+                            nudge = pick_nudge()
+                            await ws.send_json({"type": "ai_review", "text": nudge})
+
+                            if not assistant_is_speaking.get(session, False):
+                                cleaned = clean_sentence_for_tts(nudge)
+                                if cleaned:
+                                    enqueue_sentence_for_tts(session, cleaned, source="wizard")
+                            return
+
+                        # 2) Short but complete → elaboration
+                        # 2) SHORT BUT COMPLETE ANSWER — BUT EXEMPT explicit requests
+                        request_keywords = ("suggest", "suggestion", "ideas", "sensations", "expand", "help", "inspire")
+
+                        if (
+                            3 <= len(answer.split()) <= 6 
+                            and answer.endswith((".", "!", "?"))
+                            and not any(k in answer.lower() for k in request_keywords)
+                        ):
+                            if "rts" in question_text.lower():
+                                nudge = "Would you like to expand on what makes your RTS idea unique?"
+                            else:
+                                nudge = "Would you like to expand on that thought?"
+
+                            await ws.send_json({"type": "ai_review", "text": nudge})
+
+                            if not assistant_is_speaking.get(session, False):
+                                cleaned_nudge = clean_sentence_for_tts(nudge)
+                                if cleaned_nudge:
+                                    enqueue_sentence_for_tts(session, cleaned_nudge, source="wizard")
+
+                            return
+
+
+                        # 3) Full critique
                         review_prompt = (
                             f"Question:\n{question_text}\n\n"
-                            f"User Answer:\n{raw_text}\n\n"
-                            "Provide a short, helpful critique. Stay strictly on the topic of the question."
+                            f"User Answer:\n{answer}\n\n"
+                            "Offer 2–4 inspiring, collaborative suggestions that expand the idea. "
+                            "Avoid criticism. Build on the user’s creative direction."
                         )
 
                         review = await run_llm_short_review(review_prompt)
-
-                        await ws.send_json({
-                            "type": "ai_review",
-                            "text": review
-                        })
+                        await ws.send_json({"type": "ai_review", "text": review})
 
                         cleaned = clean_sentence_for_tts(review)
                         if cleaned:
@@ -609,18 +728,62 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                     except Exception as e:
                         print("❌ LLM review failed:", e)
 
+                # =============== DELAYED REVIEW ====================
+                async def delayed_review():
+                    await asyncio.sleep(1.8)
 
-                asyncio.create_task(_review())
+                    # cancel if user resumed speaking
+                    if pending_user_text.get(session) not in gdd_answer_buffer.get(session, []):
+                        return
+
+
+                    # Recompute answer for scope correctness
+                    answer_local = " ".join(gdd_answer_buffer.get(session, []))
+
+
+                    try:
+                        from app.gdd_engine.gdd_questions import QUESTIONS
+                        stage_local = gdd_wizard_stage.get(session, 0)
+                        question_text_local = QUESTIONS[stage_local] if 0 <= stage_local < len(QUESTIONS) else ""
+                    except:
+                        question_text_local = ""
+
+                    # Short but complete → nudge
+                    request_keywords = ("suggest", "suggestion", "ideas", "sensations", "expand", "help", "inspire")
+                    
+                    if (
+                        3 <= len(answer_local.split()) <= 6
+                        and answer_local.endswith((".", "!", "?"))
+                        and not any(k in answer_local.lower() for k in request_keywords)
+                    ):
+
+                        if "rts" in question_text_local.lower():
+                            nudge = "Would you like to expand on what makes your RTS idea unique?"
+                        else:
+                            nudge = "Would you like to expand on that thought?"
+
+                        await ws.send_json({"type": "ai_review", "text": nudge})
+
+                        if not assistant_is_speaking.get(session, False):
+                            cleaned = clean_sentence_for_tts(nudge)
+                            if cleaned:
+                                enqueue_sentence_for_tts(session, cleaned, source="wizard")
+                        return
+
+                    # Otherwise do full critique
+                    await _review()
+
+                pending_review_task[session] = asyncio.create_task(delayed_review())
 
             except Exception as e:
                 print("❌ /gdd/answer failed:", e)
 
-
-
-        asyncio.create_task(_record_answer())
+        await _record_answer()
         return True
 
     return False
+
+
 
 async def generate_gdd_answer_review(question: str, answer: str) -> str:
     """
@@ -657,7 +820,46 @@ Only critique or refine the answer itself.
         print("❌ LLM review failed:", e)
         return "👍 Answer noted."
 
+def estimate_completion_delay(text: str, is_wizard: bool) -> float:
+    """
+    Returns natural pause duration.
+    Wizard answers need more time.
+    Short or incomplete phrases get extra delay.
+    """
+    text = text.strip().lower()
 
+    # Incomplete thought markers
+    incompletes = ("and", "so", "because", "like", "maybe", "i think", "i feel")
+
+    if any(text.endswith(w) for w in incompletes):
+        return 1.6
+
+    # If sentence ends properly → quicker confirmation
+    if text.endswith((".", "?", "!", "…")):
+        return 0.8 if not is_wizard else 1.1
+
+    # Default mid-thought pause
+    return 1.2 if not is_wizard else 1.5
+
+async def submit_after_delay(ws, session, delay):
+    try:
+        await asyncio.sleep(delay)
+
+        text = pending_user_text.get(session, "").strip()
+        if not text:
+            return
+
+        # Try wizard handling first
+        handled = await process_gdd_wizard(ws, session, text)
+        if handled:
+            return
+
+        # Otherwise handle normal text
+        await handle_text_message(ws, text, session)
+
+    except asyncio.CancelledError:
+        # User resumed talking — ignore gracefully
+        return
 
 # ------------------------------------------------------------------
 # Main voice stream entrypoint (to be used by FastAPI websocket route)
@@ -682,69 +884,137 @@ async def azure_stream(ws: WebSocket):
     def on_partial(evt):
         try:
             text = (evt.result.text or "").strip()
+
+            # ------------------------------------------------------
+            # 1) Forward partial transcript to UI
+            # ------------------------------------------------------
             if text:
                 try:
-                    asyncio.run_coroutine_threadsafe(ws.send_json({"type": "partial", "text": text}), loop)
+                    asyncio.run_coroutine_threadsafe(
+                        ws.send_json({"type": "partial", "text": text}),
+                        loop
+                    )
                 except Exception:
                     pass
 
-            # If assistant speaking, treat partial as interrupt
+            # ------------------------------------------------------
+            # 2) CANCEL ANY PENDING WIZARD REVIEW — but ONLY if this
+            #    partial indicates NEW SPEECH (not duplicate STT)
+            # ------------------------------------------------------
+            task = pending_review_task.get(session)
+            if (
+                task
+                and not task.done()
+                and pending_user_text.get(session) != text   # 🟩 FIXED HERE
+            ):
+                try:
+                    task.cancel()
+                    print(f"[{session}] Partial STT -> canceled pending wizard review")
+                except Exception:
+                    pass
+            pending_review_task[session] = None   # ← REQUIRED RESET
+
+            # ------------------------------------------------------
+            # 3) INTERRUPT SPEAKING ASSISTANT (barge-in)
+            # ------------------------------------------------------
             if assistant_is_speaking.get(session, False) and text not in ("", ".", "uh", "um"):
                 print(f"[{session}] Partial STT during speech -> interrupting")
+
                 llm_stop_flags[session] = True
+
                 ev = tts_cancel_events.get(session)
                 if ev:
                     ev.set()
                 cancel_tts_generation(session)
+
                 worker = tts_playback_task.get(session)
                 if worker and not worker.done():
                     try:
                         worker.cancel()
                     except Exception:
                         pass
+
                 assistant_is_speaking[session] = False
+
                 try:
-                    asyncio.run_coroutine_threadsafe(ws.send_json({"type": "stop_all"}), loop)
+                    asyncio.run_coroutine_threadsafe(
+                        ws.send_json({"type": "stop_all"}),
+                        loop
+                    )
                 except Exception:
                     pass
+
         except Exception as e:
             print("on_partial error:", e)
+
+
 
     # FINAL STT: use unified wizard handler and then LLM if not handled
     def on_final(evt):
         try:
             if evt.result.reason != speechsdk.ResultReason.RecognizedSpeech:
                 return
+
             raw_text = evt.result.text.strip()
-            if not raw_text or raw_text in [".", "uh", "um"]:
+            if not raw_text or raw_text.lower() in [".", "uh", "um"]:
                 return
 
             print("🟢 Final STT:", raw_text)
 
-            # first, attempt GDD wizard handling (synchronous call via thread-safe future)
-            fut = asyncio.run_coroutine_threadsafe(process_gdd_wizard(ws, session, raw_text), loop)
-            handled = False
-            try:
-                handled = fut.result(timeout=8)
-            except Exception:
-                handled = False
-
-            if handled:
-                # wizard handled message; nothing else to do
+            # -------------------------------------------------------
+            # 1) IGNORE DUPLICATE FINALS FROM AZURE (CRITICAL)
+            # -------------------------------------------------------
+            # Azure often emits the same final result multiple times.
+            if pending_user_text.get(session) == raw_text:
+                print(f"[{session}] Duplicate final STT ignored.")
                 return
 
-            # Not wizard -> process as normal text message (which will trigger LLM stream)
-            # We call the text handler on the loop
-            # Only trigger LLM if not already busy
-            if not llm_busy.get(session):
-                asyncio.run_coroutine_threadsafe(handle_text_message(ws, raw_text, session), loop)
-            else:
-                print(f"[{session}] Voice ignored — LLM busy")
+            # Save latest transcript
+            pending_user_text[session] = raw_text
 
+            # -------------------------------------------------------
+            # 2) CANCEL ANY PENDING WIZARD REVIEW
+            # -------------------------------------------------------
+            task = pending_review_task.get(session)
+            if task and not task.done():
+                try:
+                    task.cancel()
+                    print(f"[{session}] Final STT -> cancelled pending wizard review task")
+                except Exception:
+                    pass
+
+            # -------------------------------------------------------
+            # 3) CANCEL EXISTING SMART COMPLETION TIMER
+            # -------------------------------------------------------
+            existing = completion_timer.get(session)
+            if existing and not existing.done():
+                try:
+                    existing.cancel()
+                    print(f"[{session}] Final STT -> cancelled old completion timer")
+                except Exception:
+                    pass
+
+            # -------------------------------------------------------
+            # 4) DETERMINE NATURAL DELAY BEFORE PROCESSING TEXT
+            # -------------------------------------------------------
+            delay = estimate_completion_delay(
+                raw_text,
+                gdd_wizard_active.get(session, False)
+            )
+
+            # -------------------------------------------------------
+            # 5) START DELAYED SUBMISSION (SMART COMPLETION 2.0)
+            # -------------------------------------------------------
+            completion_timer[session] = asyncio.run_coroutine_threadsafe(
+                submit_after_delay(ws, session, delay),
+                loop
+            )
 
         except Exception as e:
             print("on_final error:", e)
             traceback.print_exc()
+
+
 
     recognizer.recognizing.connect(on_partial)
     recognizer.recognized.connect(on_final)
