@@ -388,7 +388,12 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
             pass
         # notify UI & send first question text+voice
         try:
-            await ws.send_json({"type": "wizard_notice", "text": "🎮 **GDD Wizard Activated!** Say *Go Next* anytime."})
+            await ws.send_json({
+                "type": "wizard_notice",
+                "text": "🎮 **GDD Wizard Activated!** Say *Go Next* anytime.",
+                "wizard_active": True
+            })
+
             if QUESTIONS:
                 await ws.send_json({"type": "llm_done"})
                 await ws.send_json({"type": "wizard_question", "text": QUESTIONS[0], "voice": QUESTIONS[0]})

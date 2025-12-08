@@ -2,6 +2,8 @@
 /* --------------------------------------------------
    INTERNAL STATE (not importing UI)
 -------------------------------------------------- */
+export let GDD_IS_ACTIVE = false;
+
 let _gddWizardActive = false;
 
 export function isGddWizardActive() {
@@ -20,8 +22,8 @@ export let currentGDDMarkdown = "";
 -------------------------------------------------- */
 
 export async function startGDDWizard() {
-    // mark active immediately so callers can update UI
-    setGddWizardActive(true);
+
+    setGddWizardActive(true);   // REQUIRED FIX
 
     const res = await fetch("/gdd/start", { method: "POST" });
     const data = await res.json();
@@ -35,6 +37,8 @@ export async function startGDDWizard() {
         raw: data
     };
 }
+
+
 
 /* =========================
    UPDATED: answerGDD()
@@ -66,6 +70,7 @@ export async function answerGDD(userText) {
 
     // If backend returned a question (either ok or stay), normalize to next_question event
     if (data.question !== undefined && data.question !== null) {
+        setGddWizardActive(true);     // 🔥 keep wizard active during question flow
         // Keep backend 'status' for UI behavior if needed
         return {
             status: data.status ?? "ok",
@@ -93,6 +98,8 @@ export async function nextGDD() {
     });
 
     const data = await res.json();
+
+    setGddWizardActive(true);       // 🔥 ensure tooltip switches to wizard mode
     return {
         status: data.status ?? "ok",
         event: "next_question",

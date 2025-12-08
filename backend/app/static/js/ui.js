@@ -8,22 +8,25 @@ import { isGddWizardActive } from "./gdd.js";
 /* --------------------------------------------------
    createTooltip()
 -------------------------------------------------- */
-function createTooltip() {
+export function createTooltip() {
     const container = document.getElementById("messages");
 
-    // Remove all previous tooltips
+    // Remove old tooltips
     document.querySelectorAll(".ai-tip").forEach(t => t.remove());
 
     const tip = document.createElement("div");
     tip.className = "ai-tip";
 
     if (isGddWizardActive()) {
-        tip.textContent = "💡 Say “Go Next” or “Finish GDD”.";
+        // Wizard mode
+        tip.textContent = "💡 Say “Go Next” for next question — or “Finish GDD” to complete.";
     } else {
-        tip.textContent = "💡 Say “Activate GDD Wizard” to begin.";
+        // Normal mode
+        tip.textContent = "💡 Say “Activate GDD Wizard” to start creating your GDD anytime.";
     }
 
     container.appendChild(tip);
+    container.scrollTop = container.scrollHeight;
 }
 
 /* --------------------------------------------------
@@ -65,7 +68,7 @@ export function appendMessage(text, role, opts = {}) {
         div.appendChild(content);
 
         container.appendChild(div);
-        createTooltip();
+        createTooltip(); // refresh tooltip after AI output
         container.scrollTop = container.scrollHeight;
 
         return div;
@@ -104,4 +107,3 @@ export function finalizeAI() {
     const container = document.getElementById("messages");
     container.scrollTop = container.scrollHeight;
 }
-export { createTooltip };

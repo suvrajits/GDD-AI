@@ -1,12 +1,14 @@
-// ws.js — FINAL, FULLY FIXED VERSION
-import { 
-    appendMessage, 
-    appendToAI, 
-    finalizeAI, 
-    startNewAIBubble 
+// ws.js — corrected, single-tooltip, no dynamic imports
+import {
+    appendMessage,
+    appendToAI,
+    finalizeAI,
+    startNewAIBubble,
+    createTooltip
 } from "./ui.js";
 
-import { downloadGDD, setGDDSessionId } from "./gdd.js";
+import { downloadGDD, setGDDSessionId, setGddWizardActive } from "./gdd.js";
+
 
 export let ws = null;
 export let wsReady = null;
@@ -66,7 +68,7 @@ export function connectWS() {
         ws.addEventListener("open", () => {
             console.log("WS connected.");
             const btn = document.getElementById("btnStartMic");
-            if (btn) btn.disabled = false;      // 🔥 FIXED HERE
+            if (btn) btn.disabled = false;      // 🔥 mic enable fix
             resolve();
         });
 
@@ -104,15 +106,39 @@ async function onWSMessage(msg) {
     try { d = JSON.parse(msg.data); } catch { return; }
 
     // ---------- Wizard ----------
-    if (d.type === "gdd_session_id") return setGDDSessionId(d.session_id);
-    if (d.type === "wizard_answer") return appendMessage(d.text, "user");
-    if (d.type === "gdd_export_ready") return downloadGDD();
+    if (d.type === "gdd_session_id") {
+        setGDDSessionId(d.session_id);
+        createTooltip();
+        return;
+    }
+
+    if (d.type === "wizard_answer") {
+        appendMessage(d.text, "user");
+        createTooltip();
+        return;
+    }
+
+    if (d.type === "gdd_export_ready") {
+        downloadGDD();
+        createTooltip();
+        return;
+    }
+
+    // NEW: wizard_notice must update tooltip immediately
+    if (d.type === "wizard_notice") {
+        setGddWizardActive(true);   // 🔥 REQUIRED
+        appendMessage(d.text, "ai");
+        createTooltip();   // 🔥 ensures tooltip switches to wizard mode instantly
+        return;
+    }
+
+
     // --------------------------------------------------
     // WIZARD QUESTION (with Qx / N label + tooltip)
     // --------------------------------------------------
     if (d.type === "wizard_question") {
 
-        // compute question index and total
+        // compute question index and total using client's QUESTIONS if available
         const Q = window.GDD_QUESTIONS || [];
         const currentIndex = Q.indexOf(d.text);   // 0-based
         const total = Q.length;
@@ -121,12 +147,12 @@ async function onWSMessage(msg) {
             ? `Q(${currentIndex + 1}/${total}): ${d.text}`
             : d.text;
 
-        finalizeAI();  // ⬅ ensure wizard question always appears as its own standalone bubble
+        // ensure wizard question is its own bubble
+        finalizeAI();
         appendMessage(label, "ai");
 
-
-        // refresh tooltip
-        import("./ui.js").then(m => m.createTooltip?.());
+        // single, stable tooltip refresh
+        createTooltip();
 
         return;
     }
@@ -134,20 +160,22 @@ async function onWSMessage(msg) {
     if (d.type === "gdd_next") {
         appendMessage(`Q(${d.index + 1}/${d.total}): ${d.question}`, "ai");
 
-        // refresh tooltip
-        import("./ui.js").then(m => m.createTooltip?.());
-
+        // single, stable tooltip refresh
+        createTooltip();
         return;
     }
 
     if (d.type === "gdd_done") {
+        setGddWizardActive(false);   // 🔥 REQUIRE
         appendMessage("🎉 All questions answered! Say Finish GDD.", "ai");
+        createTooltip();
         return;
     }
 
     // ---------- USER FINAL ----------
     if (d.type === "final") {
         appendMessage(d.text, "user");
+        createTooltip();
         return;
     }
 
@@ -156,8 +184,7 @@ async function onWSMessage(msg) {
 
     // ---------- LLM SENTENCE STREAM ----------
     if (d.type === "llm_sentence") {
-
-        // ❌ Never mix wizard questions inside a streaming LLM bubble
+        // If server marks source 'wizard', avoid mixing it into LLM streaming bubble
         if (d.source === "wizard") return;
 
         if (!aiStreaming) {
@@ -168,21 +195,19 @@ async function onWSMessage(msg) {
         return;
     }
 
-
     if (d.type === "llm_done") {
         finalizeAI();
         aiStreaming = false;
         aiBubble = null;
+        createTooltip();
         return;
     }
 
     // ---------- TTS / SPEECH SYNC ----------
     if (d.type === "sentence_start") {
-
-        // ❌ Do NOT render wizard TTS sentences (they already appear via wizard_question)
+        // Server may include a source field; if it's wizard we already displayed question text
         if (d.source === "wizard") return;
 
-        // Normal LLM speech streaming
         if (!aiStreaming) {
             aiBubble = startNewAIBubble();
             aiStreaming = true;
@@ -192,11 +217,11 @@ async function onWSMessage(msg) {
         return;
     }
 
-
     if (d.type === "voice_done") {
         finalizeAI();
         aiStreaming = false;
         aiBubble = null;
+        createTooltip();
         return;
     }
 
@@ -206,6 +231,7 @@ async function onWSMessage(msg) {
         finalizeAI();
         aiStreaming = false;
         aiBubble = null;
+        createTooltip();
         return;
     }
 }
