@@ -3,6 +3,7 @@
    INTERNAL STATE (not importing UI)
 -------------------------------------------------- */
 export let GDD_IS_ACTIVE = false;
+export let GDD_WIZARD_FINISHED = false;
 
 let _gddWizardActive = false;
 
@@ -24,6 +25,7 @@ export let currentGDDMarkdown = "";
 export async function startGDDWizard() {
 
     setGddWizardActive(true);   // REQUIRED FIX
+    GDD_WIZARD_FINISHED = false;
 
     const res = await fetch("/gdd/start", { method: "POST" });
     const data = await res.json();
@@ -126,6 +128,7 @@ export async function finishGDD() {
 
     currentGDDMarkdown = data.markdown;
     setGddWizardActive(false);
+    GDD_WIZARD_FINISHED = true;
 
     return {
         status: "ok",

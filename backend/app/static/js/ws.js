@@ -166,18 +166,57 @@ async function onWSMessage(msg) {
     }
 
     if (d.type === "gdd_done") {
-        setGddWizardActive(false);   // 🔥 REQUIRE
-        appendMessage("🎉 All questions answered! Say Finish GDD.", "ai");
-        createTooltip();
+        setGddWizardActive(false);
+        window.GDD_WIZARD_FINISHED = true;   // 🔥 REQUIRED so tooltip switches modes
+
+        appendMessage("🎉 All questions answered! Generating your GDD...", "ai");
+
+        createTooltip();  // tooltip now switches to finished mode
+
         return;
     }
 
+
     // ---------- USER FINAL ----------
     if (d.type === "final") {
+
+        let markdown = null;
+
+        // Case 1: plain markdown string
+        if (typeof d.text === "string" && d.text.trim().startsWith("#")) {
+            markdown = d.text;
+        }
+
+        // Case 2: backend returned JSON string containing { markdown: "..." }
+        if (!markdown) {
+            try {
+                const parsed = JSON.parse(d.text);
+                if (parsed && parsed.markdown) {
+                    markdown = parsed.markdown;
+                }
+            } catch (e) {
+                // ignore — not JSON
+            }
+        }
+
+        // Detect final GDD output
+        if (markdown) {
+            window.GDD_WIZARD_FINISHED = true;
+            setGddWizardActive(false);
+
+            appendMessage("📘 Your GDD is ready!", "ai");
+            appendMessage(markdown, "ai");
+
+            createTooltip();  // NOW tooltip changes to download instructions
+            return;
+        }
+
+        // Normal user message
         appendMessage(d.text, "user");
         createTooltip();
         return;
     }
+
 
     // ---------- IGNORE TOKEN STREAM ----------
     if (d.type === "llm_stream") return;

@@ -3,7 +3,7 @@
 export let currentAiDiv = null;
 export let currentSessionIsVoice = false;
 
-import { isGddWizardActive } from "./gdd.js";
+import { isGddWizardActive, GDD_WIZARD_FINISHED } from "./gdd.js";
 
 /* --------------------------------------------------
    createTooltip()
@@ -17,11 +17,13 @@ export function createTooltip() {
     const tip = document.createElement("div");
     tip.className = "ai-tip";
 
-    if (isGddWizardActive()) {
-        // Wizard mode
-        tip.textContent = "💡 Say “Go Next” for next question — or “Finish GDD” to complete.";
-    } else {
-        // Normal mode
+   if (GDD_WIZARD_FINISHED) {
+        tip.textContent = "📘 GDD Generated! Say “Download GDD” or “Export GDD” to download your document.";
+    }
+    else if (isGddWizardActive()) {
+        tip.textContent = "💡 Say “Go Next” for the next question — or “Finish GDD” to compose the full document.";
+    }
+    else {
         tip.textContent = "💡 Say “Activate GDD Wizard” to start creating your GDD anytime.";
     }
 
