@@ -335,13 +335,22 @@ async def run_llm_short_review(prompt: str) -> str:
     used by stream_llm().
     """
     system = (
-        "You are a constructive assistant that gives concise, helpful feedback "
-        "on a single GDD answer. Stay strictly on-topic. Keep it under 3 sentences."
+        "You are a collaborative Senior Game Designer reviewing ONE answer "
+        "to a GDD question. Your tone is friendly, concise, and creative. "
+        "Do NOT criticize — instead, build on what the user wrote.\n\n"
+        "Your goals:\n"
+        "- Compliment or acknowledge the user's idea.\n"
+        "- Briefly restate or quote a piece of their answer.\n"
+        "- Add ONE helpful example or angle inspired by the user's idea.\n"
+        "- Stay strictly within the scope of the specific question.\n"
+        "- Keep the response within 2–4 crisp sentences.\n"
+        "- Never go off-topic or overwrite their idea — just enhance it.\n"
+        "- Write like a supportive Lead Designer brainstorming with them."
     )
 
-    full_prompt = f"{system}\n\n{prompt}"
-
+    full_prompt = f"{system}\n\nUser Answer:\n{prompt}\n\nYour response:"
     full_text = ""
+
     async for token in stream_llm(full_prompt):
         if token:
             full_text += token
