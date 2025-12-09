@@ -21,6 +21,225 @@ import {
     micActive
 } from "./mic.js";
 
+// -------------------------------
+// RAG: Upload + Embed
+// -------------------------------
+const ragFileInput = document.getElementById("ragFileInput");
+const btnUploadEmbed = document.getElementById("btnUploadEmbed");
+const uploadStatus = document.getElementById("uploadStatus");
+const kbList = document.getElementById("kbList");
+
+/* --------------------------------------------------
+   LEFT & RIGHT PANEL TOGGLES
+-------------------------------------------------- */
+
+const sidebar = document.querySelector(".sidebar");
+const workspace = document.querySelector(".workspace");
+
+const sidebarToggle = document.getElementById("sidebarToggle");
+const workspaceToggle = document.getElementById("workspaceToggle");
+
+
+// Sidebar slide-in/out
+if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", () => {
+        sidebar.classList.toggle("collapsed");
+
+        // Change arrow direction
+        sidebarToggle.textContent = sidebar.classList.contains("collapsed")
+            ? "❯"
+            : "❮";
+    });
+}
+
+// Workspace slide-in/out
+if (workspaceToggle) {
+    workspaceToggle.addEventListener("click", () => {
+        workspace.classList.toggle("collapsed");
+
+        // Change arrow direction
+        workspaceToggle.textContent = workspace.classList.contains("collapsed")
+            ? "❮"
+            : "❯";
+    });
+}
+
+
+
+/* Load Knowledge Base */
+async function refreshKnowledgeBase() {
+    const kbList = document.getElementById("kbList");
+    if (!kbList) {
+        console.warn("kbList element not found.");
+        return;
+    }
+
+    kbList.innerHTML = `<div class="loading">Loading...</div>`;
+
+    try {
+        const res = await fetch("/rag/embedded-files");
+        const json = await res.json();
+
+        if (!json.files || json.files.length === 0) {
+            kbList.innerHTML = `<div class="empty">No knowledge base files yet.</div>`;
+            return;
+        }
+
+        kbList.innerHTML = "";
+
+        json.files.forEach(filename => {
+            const row = document.createElement("div");
+            row.className = "kb-item";
+
+            // File name
+            const nameSpan = document.createElement("span");
+            nameSpan.textContent = filename;
+
+            // ❌ Delete button
+            const delBtn = document.createElement("span");
+            delBtn.className = "kb-remove";
+            delBtn.textContent = "✖";
+
+            // Delete handler
+            delBtn.onclick = async () => {
+                if (!confirm(`Delete '${filename}' from knowledge base?`)) return;
+
+                try {
+                    const res = await fetch(`/rag/file/${encodeURIComponent(filename)}`, {
+                        method: "DELETE"
+                    });
+
+                    if (!res.ok) {
+                        alert("Failed to delete file.");
+                        return;
+                    }
+
+                    // Refresh list
+                    await refreshKnowledgeBase();
+
+                } catch (err) {
+                    console.error(err);
+                    alert("Error deleting file.");
+                }
+            };
+
+            row.appendChild(nameSpan);
+            row.appendChild(delBtn);
+            kbList.appendChild(row);
+        });
+
+    } catch (err) {
+        console.error(err);
+        kbList.innerHTML = `<div class="error">Failed to load KB.</div>`;
+    }
+}
+
+
+
+
+// Upload + embed files
+async function uploadAndEmbedFiles() {
+    const files = ragFileInput.files;
+    if (!files || files.length === 0) {
+        uploadStatus.textContent = "Please select files first.";
+        uploadStatus.style.color = "red";
+        return;
+    }
+
+    uploadStatus.textContent = "Uploading & embedding...";
+    uploadStatus.style.color = "black";
+
+    const form = new FormData();
+    for (let f of files) form.append("files", f);
+
+    try {
+        const resp = await fetch("/rag/upload", {
+            method: "POST",
+            body: form
+        });
+
+        if (!resp.ok) {
+            uploadStatus.textContent = "Upload failed.";
+            uploadStatus.style.color = "red";
+            return;
+        }
+
+        const data = await resp.json();
+
+        if (data.success) {
+            uploadStatus.textContent = "File(s) embedded successfully!";
+            uploadStatus.style.color = "green";
+            refreshKnowledgeBase();
+        } else {
+            uploadStatus.textContent = "Embedding error.";
+            uploadStatus.style.color = "red";
+        }
+
+    } catch (err) {
+        uploadStatus.textContent = "Upload error.";
+        uploadStatus.style.color = "red";
+        console.error(err);
+    }
+}
+
+// Hook the upload button
+btnUploadEmbed.addEventListener("click", async () => {
+    uploadStatus.textContent = "Uploading...";
+    const files = ragFileInput.files;
+
+    if (!files.length) {
+        uploadStatus.textContent = "Please select a file.";
+        uploadStatus.style.color = "red";
+        return;
+    }
+
+    try {
+        // 1️⃣ Upload files
+        const formData = new FormData();
+        for (const f of files) formData.append("files", f);
+
+        const uploadRes = await fetch("/rag/upload", {
+            method: "POST",
+            body: formData
+        });
+
+        if (!uploadRes.ok) {
+            uploadStatus.textContent = "Upload failed.";
+            uploadStatus.style.color = "red";
+            return;
+        }
+
+        uploadStatus.textContent = "Embedding...";
+        uploadStatus.style.color = "black";
+
+        // 2️⃣ NOW ingest them
+        const ingestRes = await fetch("/rag/ingest", { method: "POST" });
+        const ingestJson = await ingestRes.json();
+
+        if (!ingestRes.ok) {
+            uploadStatus.textContent = ingestJson.detail || "Embedding failed.";
+            uploadStatus.style.color = "red";
+            return;
+        }
+
+        uploadStatus.textContent = "Embedded successfully ✔";
+        uploadStatus.style.color = "green";
+
+        await refreshKnowledgeBase();
+
+    } catch (err) {
+        console.error(err);
+        uploadStatus.textContent = "Upload/Embed error.";
+        uploadStatus.style.color = "red";
+    }
+});
+
+
+
+
+// Load on startup
+refreshKnowledgeBase();
+
 /* --------------------------------------------------
    SEND TEXT — Includes FULL Wizard Logic
 -------------------------------------------------- */

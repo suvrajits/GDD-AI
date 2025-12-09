@@ -21,7 +21,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
     saved_files = []
     for f in files:
         ext = Path(f.filename).suffix.lower()
-        if ext not in [".html", ".htm", ".txt", ".md"]:
+        if ext not in [".html", ".htm", ".txt", ".md", ".docx", ".pdf"]:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
         path = UPLOAD_DIR / f.filename
         with open(path, "wb") as out:

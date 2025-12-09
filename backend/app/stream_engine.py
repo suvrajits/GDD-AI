@@ -69,6 +69,10 @@ def ensure_structs(session: str):
     gdd_session_map.setdefault(session, None)
     llm_busy.setdefault(session, False)
 
+        # 🔥 REQUIRED NEW INITIALIZATIONS
+    pending_review_task.setdefault(session, None)
+    gdd_answer_buffer.setdefault(session, [])
+
 def cleanup_session(session: str):
     """Remove session data (best-effort)."""
     for d in [llm_stop_flags, tts_sentence_queue, tts_gen_tasks, tts_cancel_events,
