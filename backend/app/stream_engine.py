@@ -72,16 +72,23 @@ def ensure_structs(session: str):
         # 🔥 REQUIRED NEW INITIALIZATIONS
     pending_review_task.setdefault(session, None)
     gdd_answer_buffer.setdefault(session, [])
+    pending_user_text.setdefault(session, "")
+    completion_timer.setdefault(session, None)
+
 
 def cleanup_session(session: str):
     """Remove session data (best-effort)."""
-    for d in [llm_stop_flags, tts_sentence_queue, tts_gen_tasks, tts_cancel_events,
-              tts_playback_task, playback_ws_registry, assistant_is_speaking,
-              gdd_wizard_active, gdd_wizard_stage, gdd_session_map, llm_busy]:
+    for d in [
+        llm_stop_flags, tts_sentence_queue, tts_gen_tasks, tts_cancel_events,
+        tts_playback_task, playback_ws_registry, assistant_is_speaking,
+        gdd_wizard_active, gdd_wizard_stage, gdd_session_map, llm_busy,
+        pending_review_task, gdd_answer_buffer     # ← 🔥 ADD THESE TWO
+    ]:
         try:
             d.pop(session, None)
         except Exception:
             pass
+
 
 def clean_sentence_for_tts(text: str) -> str:
     """Light cleaning to avoid TTS choking on markdown or weird characters."""
@@ -316,6 +323,12 @@ async def stream_llm_to_client(ws: WebSocket, session: str, user_text: str):
         except Exception:
             pass
 
+    finally:
+        # ALWAYS unlock LLM no matter what happened
+        llm_busy[session] = False
+        print(f"[{session}] LLM unlocked (finally block)")   
+    
+
     # leftover
     if token_buffer.strip():
         rem = token_buffer.strip()
@@ -330,8 +343,6 @@ async def stream_llm_to_client(ws: WebSocket, session: str, user_text: str):
     except Exception:
         pass
 
-    # mark not busy (allow next calls)
-    llm_busy[session] = False
 
 
 # --------------------------------------------------------------------
@@ -662,6 +673,7 @@ async def process_gdd_wizard(ws: WebSocket, session: str, raw_text: str) -> bool
                         task.cancel()
                     except:
                         pass
+                pending_review_task[session] = None
 
                 await ws.send_json({"type": "wizard_answer", "text": raw_text})
 
@@ -986,6 +998,7 @@ async def azure_stream(ws: WebSocket):
                     print(f"[{session}] Final STT -> cancelled pending wizard review task")
                 except Exception:
                     pass
+            pending_review_task[session] = None
 
             # -------------------------------------------------------
             # 3) CANCEL EXISTING SMART COMPLETION TIMER
@@ -1049,10 +1062,15 @@ async def azure_stream(ws: WebSocket):
                             print(f"[{session}] LLM busy - skip typed call")
                             continue
                         # mark busy and spawn llm stream
-                        llm_busy[session] = True
-                        # echo user text
-                        await ws.send_json({"type": "final", "text": data.get("text", "")})
-                        asyncio.create_task(stream_llm_to_client(ws, session, data.get("text", "")))
+                        # mark busy and spawn llm stream (defensive)
+                        try:
+                            llm_busy[session] = True
+                            await ws.send_json({"type": "final", "text": data.get("text", "")})
+                            asyncio.create_task(stream_llm_to_client(ws, session, data.get("text", "")))
+                        except Exception as e:
+                            print(f"[{session}] failed to spawn LLM stream: {e}")
+                            llm_busy[session] = False
+
                         continue
 
                     if data.get("type") == "stop_llm":
@@ -1138,4 +1156,53 @@ async def handle_text_message(ws, text, session):
     await ws.send_json({"type": "final", "text": text})
 
     # Run LLM streaming
-    asyncio.create_task(stream_llm_to_client(ws, session, text))
+    # -----------------------------
+    # 🔍 RAG SEARCH (NEW)
+    # -----------------------------
+    # -----------------------------
+    # 🔍 RAG SEARCH (guarded + includes filenames)
+    # -----------------------------
+    rag_context = ""
+    try:
+        from app.rag_engine import rag_engine
+        rag_results = rag_engine.search(text, k=5)
+
+        if rag_results:
+            parts = []
+            for r in rag_results:
+                fname = (
+                    r.get("meta", {}).get("file")
+                    or r.get("meta", {}).get("source")
+                    or "unknown"
+                )
+
+                snippet = r.get("text", "").replace("\n", " ").strip()
+                if len(snippet) > 400:
+                    snippet = snippet[:400].rsplit(" ", 1)[0] + "…"
+
+                parts.append(f"{fname}: {snippet}")
+
+            rag_context = (
+                "Relevant knowledge base context:\n"
+                + "\n".join(f"- {p}" for p in parts)
+                + "\n\n"
+            )
+    except Exception as e:
+        print(f"[{session}] RAG import/search failed: {e}")
+        rag_context = ""
+
+
+    # Final enriched prompt
+    system_prompt = (
+    "You are Game Genie AI. The user may upload reference documents. "
+    "The following context is extracted from those uploaded files. "
+    "Use the context when it helps answer the question, and you may "
+    "reference file names or metadata. You are also free to think beyond "
+    "the context when appropriate, but do NOT invent facts about the uploaded "
+    "files that do not appear in the provided context."
+    )
+
+    full_query = f"{system_prompt}\n\n{rag_context}User: {text}\nAssistant:"
+
+    asyncio.create_task(stream_llm_to_client(ws, session, full_query))
+
