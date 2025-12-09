@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "core_loop": { "type": "string" },
+    "session_flow": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "onboarding_milestones": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["core_loop", "session_flow", "onboarding_milestones"]
+}

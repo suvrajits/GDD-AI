@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": { "type": "string" },
+          "location": { "type": "string" },
+          "fix": { "type": "string" }
+        },
+        "required": ["severity", "location", "fix"]
+      }
+    },
+    "confidence": {
+      "type": "number"
+    }
+  },
+  "required": ["issues", "confidence"]
+}

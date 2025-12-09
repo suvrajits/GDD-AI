@@ -1,89 +1,89 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Realtime Speech → Azure STT (PCM Worklet)</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; }
-    </style>
+    <meta charset="UTF-8" />
+    <title>Game Genie AI — Voice + Chat</title>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
-<h2>🎤 Realtime Speech → Azure STT (PCM Worklet)</h2>
 
-<button id="startBtn">Start Mic</button>
-<button id="stopBtn">Stop</button>
+<div class="layout">
 
-<p><b>Partial:</b> <span id="partial"></span></p>
-<p><b>Final:</b> <span id="final"></span></p>
-<p><b>LLM:</b> <span id="llm"></span></p>
+    <!-- LEFT Sidebar -->
+    <div class="sidebar" id="sidebar">   
+        <div id="sidebarToggle" class="sidebar-toggle">❮</div>   <!-- ⬅️ NEW -->
 
-<script>
-let ws = null;
-let audioContext = null;
-let workletNode = null;
-
-document.getElementById("startBtn").onclick = async () => {
-    console.log("🎤 Starting microphone…");
-
-    ws = new WebSocket("ws://localhost:8000/ws/stream");
-    ws.binaryType = "arraybuffer";
-
-    ws.onmessage = (msg) => {
-        const d = JSON.parse(msg.data);
-
-        if (d.type === "partial") {
-            document.getElementById("partial").textContent = d.text;
-        }
-
-        if (d.type === "final") {
-            document.getElementById("final").textContent = d.text;
-            document.getElementById("llm").textContent = ""; // clear output
-        }
-
-        if (d.type === "llm_stream") {
-            document.getElementById("llm").textContent += d.token;
-        }
-
-        if (d.type === "llm_done") {
-            console.log("LLM stream done");
-        }
-    };
+        <h2 class="sidebar-title">
+            <span class="icon">🎮</span>
+            <span class="label">Game Genie AI</span>
+        </h2>
 
 
+        <button class="side-btn">
+            🆕 <span class="label">New Concept</span>
+        </button>
+        <button class="side-btn">
+            🎨 <span class="label">Visual Ideas</span>
+        </button>
+        <button class="side-btn">
+            🔁 <span class="label">Game Loops</span>
+        </button>
+        <button class="side-btn">
+            💰 <span class="label">Monetisation</span>
+        </button>
+        <button class="side-btn">
+            ⚙️ <span class="label">Mechanics</span>
+        </button>
+    </div>
 
-    ws.onopen = async () => {
-        console.log("WS connected");
+    <!-- Chat Panel -->
+    <div class="chat-panel">
+        <div id="messages"></div>
 
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        <div class="input-bar">
+            <input id="textInput" placeholder="Type a message..." />
+            <button id="btnUploadChat" class="btn btn-upload">📤</button>
+            <input id="ragFileInputChat" type="file" multiple style="display:none;" />
+            <button id="btnSend" class="btn btn-send">✉️</button>
+            <button id="btnStartMic" class="btn btn-mic">🎙️</button>
+            <button id="btnStopMic" class="btn btn-stop">⛔</button>
+        </div>
+    </div>
 
-        audioContext = new AudioContext({ sampleRate: 16000 });
+    <!-- RIGHT Workspace -->
+    <div class="workspace collapsed" id="workspace">
+        <div id="workspaceToggle" class="workspace-toggle">❯</div>
 
-        await audioContext.audioWorklet.addModule("/static/pcm-worklet.js");
+        <h3>📌 Workspace</h3>
+        <p>Pin ideas, drag notes, brainstorm loops…</p>
 
-        const source = audioContext.createMediaStreamSource(stream);
-        workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
+        <hr>
 
-        workletNode.port.onmessage = (event) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(event.data);
-            }
-        };
+        <div class="upload-box">
+            <h4>📤 Upload & Embed</h4>
 
-        source.connect(workletNode);
-        console.log("🎤 PCM Worklet streaming ACTIVE");
-    };
-};
+            <input id="ragFileInput" type="file" multiple style="margin-top:8px;" />
 
-document.getElementById("stopBtn").onclick = () => {
-    console.log("🛑 Stopping…");
+            <button id="btnUploadEmbed" class="btn btn-upload small-btn">Upload + Embed</button>
 
-    try { if (workletNode) workletNode.disconnect(); } catch {}
-    try { if (audioContext) audioContext.close(); } catch {}
-    try { if (ws) ws.close(); } catch {}
+            <div id="uploadStatus" class="status-text"></div>
 
-    console.log("🛑 Mic + WS stopped");
-};
-</script>
+            <h4 style="margin-top:16px;">Knowledge Base</h4>
+            <div id="kbList" class="kb-list"></div>
+        </div>
+
+
+
+
+    </div>
+
+</div>
+
+
+<script type="module" src="/static/js/app.js"></script>
+
 
 </body>
+
 </html>
