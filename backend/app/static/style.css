@@ -1,0 +1,371 @@
+/* =========================================
+   GLOBAL LAYOUT
+========================================= */
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: Inter, sans-serif;
+    background: #f7f7f7;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.layout {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+    transition: all 0.25s ease;
+    position: relative;
+}
+
+/* =========================================
+   SIDEBAR (LEFT)
+========================================= */
+
+.sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: #1c1f24;
+    color: white;
+    padding: 20px;
+    box-sizing: border-box;
+    position: relative;
+    transition: width 0.25s ease, min-width 0.25s ease;
+}
+
+.sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-title .icon {
+    font-size: 18px;
+}
+
+.sidebar-title .label {
+    font-size: 18px;
+}
+
+/* ----- Collapsed Sidebar ----- */
+
+.sidebar.collapsed {
+    width: 60px;
+    min-width: 60px;
+}
+
+/* Hide only text label — keep icon */
+.sidebar.collapsed .sidebar-title .label {
+    display: none !important;
+}
+
+/* Hide button labels in collapsed mode */
+.sidebar.collapsed .side-btn .label {
+    display: none !important;
+}
+
+/* Square icon buttons when collapsed */
+.sidebar.collapsed .side-btn {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    margin: 12px auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px; /* bigger icon */
+}
+
+/* Normal Sidebar Buttons */
+.side-btn {
+    background: #2b2f36;
+    border: none;
+    width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    color: #ddd;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.side-btn:hover {
+    background: #394048;
+}
+
+/* =========================================
+   CHAT PANEL (CENTER)
+========================================= */
+
+.chat-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+    transition: flex 0.25s ease, width 0.25s ease;
+}
+
+#messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+}
+
+/* Message bubbles */
+.msg {
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    max-width: 70%;
+    border-radius: 10px;
+    white-space: pre-wrap;
+    font-size: 15px;
+    line-height: 1.4;
+}
+
+.user {
+    background: #d7eaff;
+    align-self: flex-end;
+}
+
+.ai {
+    background: #f1f1f1;
+    align-self: flex-start;
+    color: #111;
+}
+
+.ai.streaming {
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,0.1);
+    opacity: 0.95;
+}
+
+.ai .content {
+    white-space: pre-wrap;
+}
+
+/* =========================================
+   INPUT BAR
+========================================= */
+
+.input-bar {
+    display: flex;
+    padding: 10px 20px;
+    background: #ffffff;
+    border-top: 1px solid #ddd;
+}
+
+.input-bar input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    margin-right: 10px;
+    font-size: 15px;
+}
+
+.btn {
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+    border: none;
+    font-weight: 600;
+}
+
+.btn-send { background: #007bff; color: white; }
+.btn-mic  { background: #4caf50; color: white; }
+.btn-stop { background: #e53935; color: white; }
+
+.btn:hover { opacity: 0.9; }
+
+/* =========================================
+   WORKSPACE (RIGHT)
+========================================= */
+
+.workspace {
+    width: 380px;
+    min-width: 380px;
+    background: #ffffff;
+    border-left: 1px solid #ddd;
+    padding: 20px;
+    position: relative;
+    transition: width 0.25s ease, min-width 0.25s ease;
+}
+
+.workspace.collapsed {
+    width: 40px;
+    min-width: 40px;
+}
+
+.workspace.collapsed h3,
+.workspace.collapsed p,
+.workspace.collapsed .upload-box {
+    display: none;
+}
+
+
+/* =========================================
+   TOGGLE BUTTONS
+========================================= */
+
+.sidebar-toggle,
+.workspace-toggle {
+    position: absolute;
+    top: 18px;
+    width: 22px;
+    height: 22px;
+
+    background: rgba(255, 255, 255, 0.12);
+    color: #bbb;
+
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 22px;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+
+    z-index: 2000;
+    box-shadow: 0 0 4px rgba(0,0,0,0.25);
+    transition: background 0.2s, color 0.2s;
+}
+
+.sidebar-toggle:hover,
+.workspace-toggle:hover {
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+/* Position toggles outside edges */
+.sidebar-toggle { right: -12px; }
+.workspace-toggle { left: -12px; }
+
+.btn-mic.active {
+    background: #3a8d40 !important;  /* darker green */
+    box-shadow: inset 0 0 6px rgba(0,0,0,0.35);
+    transform: translateY(1px);
+}
+
+/* Upload buttons */
+.btn-upload {
+    background: #666;
+    color: white;
+    margin-right: 8px;
+}
+
+.btn-upload:hover {
+    background: #555;
+}
+
+/* Small buttons inside workspace */
+.small-btn {
+    padding: 6px 10px;
+    font-size: 13px;
+    margin-top: 6px;
+}
+
+.status-text {
+    font-size: 13px;
+    color: #444;
+    margin-top: 6px;
+}
+
+.upload-box {
+    margin-top: 20px;
+    padding: 12px;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.embed-check {
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.kb-list {
+    margin-top: 10px;
+    background: #eee;
+    padding: 8px;
+    border-radius: 6px;
+}
+
+.kb-item {
+    background: #fff;
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.small-btn {
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.kb-remove {
+    float: right;
+    cursor: pointer;
+    color: #c33;
+    font-weight: bold;
+}
+
+.kb-remove:hover {
+    color: #ff0000;
+}
+
+/* Tip bubble shown under AI messages */
+.ai-tip {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+    margin-left: 6px;
+    user-select: none;
+    font-style: italic;
+}
+
+/* =========================================
+   GDD WIZARD — ULTRA-SUBTLE AQUA GLOW
+========================================= */
+
+.msg.ai.gdd-glow {
+    position: relative;
+    box-shadow:
+        0 0 4px 1px rgba(0, 255, 240, 0.35),   /* inner halo */
+        0 0 8px 2px rgba(0, 200, 255, 0.22),   /* mid glow */
+        0 0 14px 3px rgba(0, 255, 255, 0.15);  /* soft outer tint */
+    border: 1px solid rgba(0, 255, 255, 0.45);
+    animation: gddPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes gddPulse {
+    0% {
+        box-shadow:
+            0 0 3px 1px rgba(0, 255, 240, 0.30),
+            0 0 6px 2px rgba(0, 200, 255, 0.18),
+            0 0 10px 3px rgba(0, 255, 255, 0.12);
+    }
+    50% {
+        box-shadow:
+            0 0 5px 1px rgba(0, 255, 255, 0.55),
+            0 0 10px 3px rgba(0, 200, 255, 0.28),
+            0 0 16px 4px rgba(0, 240, 255, 0.18);
+    }
+    100% {
+        box-shadow:
+            0 0 3px 1px rgba(0, 255, 240, 0.30),
+            0 0 6px 2px rgba(0, 200, 255, 0.18),
+            0 0 10px 3px rgba(0, 255, 255, 0.12);
+    }
+}

@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "systems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "formula": { "type": "string" },
+          "sample_values": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                { "type": "number" },
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "additionalProperties": {
+                    "oneOf": [
+                      { "type": "number" },
+                      { "type": "string" }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "required": ["name", "formula", "sample_values"]
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "risk": { "type": "string" },
+              "description": { "type": "string" }
+            },
+            "required": ["risk", "description"]
+          }
+        ]
+      }
+    }
+  },
+  "required": ["systems", "risks"]
+}

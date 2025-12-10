@@ -205,5 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+<<<<<<< HEAD
 .docx
 .vscode
+=======
+
+#ignore documentation
+Game-Genie-Doc.docx
+>>>>>>> 225b551ec0da1e24002876c62463c275fb3e96fe

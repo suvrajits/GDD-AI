@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "screens": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "primary_cta": { "type": "string" },
+          "secondary_cta": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "required": ["name", "primary_cta", "secondary_cta", "notes"]
+      }
+    },
+    "tutorial_steps": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "step": { "type": "number" },
+              "description": { "type": "string" }
+            },
+            "required": ["step", "description"]
+          }
+        ]
+      }
+    }
+  },
+  "required": ["screens", "tutorial_steps"]
+}

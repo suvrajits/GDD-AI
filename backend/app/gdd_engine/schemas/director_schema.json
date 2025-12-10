@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "vision": { "type": "string" },
+    "pillars": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "must_haves": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "kill_criteria": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["vision", "pillars", "must_haves", "kill_criteria"]
+}
